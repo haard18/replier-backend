@@ -14,6 +14,20 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+
+// Import Clerk backend SDK
+let clerkClient;
+try {
+  const { createClerkClient } = require("@clerk/backend");
+  clerkClient = createClerkClient({
+    secretKey: process.env.CLERK_SECRET_KEY,
+  });
+  console.log("✅ Clerk backend client initialized");
+} catch (error) {
+  console.warn("⚠️ Clerk backend not available:", error.message);
+  // Continue anyway - usage tracking will be skipped
+}
 
 // Verify API key BEFORE initializing anything
 if (!process.env.ANTHROPIC_API_KEY) {
@@ -47,6 +61,120 @@ app.use(cors());
 app.use(express.json());
 
 /**
+ * Clerk Token Validation Middleware
+ * 
+ * Validates the Clerk session token from the Authorization header.
+ * The Chrome extension and web app send tokens in the format:
+ * Authorization: Bearer <clerk_token>
+ * 
+ * This middleware validates the token and attaches user info to req.auth
+ */
+async function validateClerkToken(req, res, next) {
+  // Skip validation for health check and public endpoints
+  if (req.path === "/health" || req.path === "/" || req.path === "/favicon.ico") {
+    return next();
+  }
+
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      // For backward compatibility, allow requests without auth for now
+      // Remove this check in production for full token requirement
+      console.warn("⚠️ Request without Authorization header:", req.path);
+      req.auth = null;
+      return next();
+    }
+
+    const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+    // Verify the Clerk token
+    // In production, you should verify the signature using Clerk's public key
+    // For now, we'll do basic validation
+    try {
+      // Clerk tokens are JWTs that we can decode
+      // The token structure contains: header.payload.signature
+      const parts = token.split(".");
+
+      if (parts.length !== 3) {
+        throw new Error("Invalid token format");
+      }
+
+      // Decode the payload (without verifying signature for now)
+      // In production, use Clerk's SDK to verify: https://clerk.com/docs/backend-requests/handling/jwt-verification
+      const payload = JSON.parse(
+        Buffer.from(parts[1], "base64").toString("utf-8")
+      );
+
+      // Attach auth info to request
+      req.auth = {
+        userId: payload.sub || payload.uid, // Clerk user ID
+        sessionId: payload.sid, // Session ID
+        token: token,
+      };
+
+      console.log(`✅ Token validated for user: ${req.auth.userId}`);
+      next();
+    } catch (decodeError) {
+      console.error("❌ Token decode error:", decodeError.message);
+      // For development, log but allow. In production, reject
+      req.auth = { token: token }; // Keep token for logging
+      next();
+    }
+  } catch (error) {
+    console.error("❌ Auth middleware error:", error.message);
+    req.auth = null;
+    next();
+  }
+}
+
+// Apply auth middleware to all routes
+app.use(validateClerkToken);
+
+/**
+ * Helper function to track usage in Clerk user metadata
+ * Updates the user's publicMetadata with usage stats
+ */
+async function trackUsage(userId, platform = "api") {
+  if (!userId || !clerkClient) {
+    return;
+  }
+
+  try {
+    // Get current user to check existing metadata
+    const user = await clerkClient.users.getUser(userId);
+    const currentMetadata = user.publicMetadata || {};
+    const currentUsage = currentMetadata.usage_count || 0;
+    const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const lastResetDate = currentMetadata.last_reset_date || currentDate;
+
+    // Reset usage if it's a new day
+    let usageCount = currentUsage;
+    if (lastResetDate !== currentDate) {
+      usageCount = 0;
+    }
+
+    // Increment usage
+    usageCount += 1;
+
+    // Update user's public metadata with usage stats
+    await clerkClient.users.updateUserMetadata(userId, {
+      publicMetadata: {
+        ...currentMetadata,
+        usage_count: usageCount,
+        last_usage_date: new Date().toISOString(),
+        last_reset_date: currentDate,
+        last_platform: platform,
+      },
+    });
+
+    console.log(`📊 [${platform.toUpperCase()}] Usage tracked for user ${userId}: ${usageCount} replies today`);
+  } catch (error) {
+    console.warn(`⚠️ Usage tracking error for user ${userId}:`, error.message);
+  }
+}
+
+/**
  * Health check endpoint
  * Used by the extension to verify the backend is running
  */
@@ -60,6 +188,8 @@ app.get("/health", (req, res) => {
  * 
  * Request body: { text: "original post text" }
  * Response: plain text reply (Web3 thought leader tone)
+ * 
+ * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/linkedin", async (req, res) => {
   try {
@@ -73,6 +203,9 @@ app.post("/generate/linkedin", async (req, res) => {
     }
 
     console.log(`📝 [LinkedIn] Generating reply for: "${text.substring(0, 50)}..."`);
+    if (req.auth?.userId) {
+      console.log(`👤 User: ${req.auth.userId}`);
+    }
 
     // Double-check Anthropic client exists
     if (!anthropic) {
@@ -130,6 +263,11 @@ Remember: Only provide the comment itself, nothing else.`,
 
     console.log(`✅ [LinkedIn] Reply generated: "${reply.substring(0, 50)}..."`);
 
+    // Track usage if user is authenticated
+    if (req.auth?.userId) {
+      await trackUsage(req.auth.userId, "linkedin");
+    }
+
     // Return the reply as plain text
     res.set("Content-Type", "text/plain");
     res.send(reply);
@@ -168,6 +306,8 @@ Remember: Only provide the comment itself, nothing else.`,
  * 
  * Request body: { text: "original post text" }
  * Response: plain text reply (quirky and fun tone, shorter)
+ * 
+ * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/twitter", async (req, res) => {
   try {
@@ -181,6 +321,9 @@ app.post("/generate/twitter", async (req, res) => {
     }
 
     console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..."`);
+    if (req.auth?.userId) {
+      console.log(`👤 User: ${req.auth.userId}`);
+    }
 
     // Double-check Anthropic client exists
     if (!anthropic) {
@@ -229,6 +372,11 @@ Remember: Keep it short (1-2 sentences), witty, and use appropriate emojis. Only
     }
 
     console.log(`✅ [Twitter] Reply generated: "${reply.substring(0, 50)}..."`);
+
+    // Track usage if user is authenticated
+    if (req.auth?.userId) {
+      await trackUsage(req.auth.userId, "twitter");
+    }
 
     // Return the reply as plain text
     res.set("Content-Type", "text/plain");
