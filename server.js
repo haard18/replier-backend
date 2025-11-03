@@ -16,25 +16,25 @@ const express = require("express");
 const cors = require("cors");
 
 // Verify API key BEFORE initializing anything
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ ERROR: OPENAI_API_KEY is not set in .env file");
-  console.error("Please create a .env file with: OPENAI_API_KEY=your_key_here");
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.error("❌ ERROR: ANTHROPIC_API_KEY is not set in .env file");
+  console.error("Please create a .env file with: ANTHROPIC_API_KEY=your_key_here");
   process.exit(1);
 }
 
-console.log("✅ OpenAI API key found");
+console.log("✅ Anthropic API key found");
 
-// Now safely import and initialize OpenAI
-let openai;
+// Now safely import and initialize Anthropic
+let anthropic;
 try {
-  const { OpenAI } = require("openai");
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+  const Anthropic = require("@anthropic-ai/sdk");
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
   });
-  console.log("✅ OpenAI client initialized");
+  console.log("✅ Anthropic (Claude) client initialized");
 } catch (error) {
-  console.error("❌ Failed to initialize OpenAI:", error.message);
-  console.error("Make sure you ran: npm install");
+  console.error("❌ Failed to initialize Anthropic:", error.message);
+  console.error("Make sure you ran: npm install @anthropic-ai/sdk");
   process.exit(1);
 }
 
@@ -74,20 +74,16 @@ app.post("/generate", async (req, res) => {
 
     console.log(`📝 Generating reply for: "${text.substring(0, 50)}..."`);
 
-    // Double-check OpenAI client exists
-    if (!openai) {
-      throw new Error("OpenAI client not initialized. Check your API key.");
+    // Double-check Anthropic client exists
+    if (!anthropic) {
+      throw new Error("Anthropic client not initialized. Check your API key.");
     }
 
-    // Call OpenAI API to generate a reply using chat completions
-    // This is the correct API for OpenAI SDK v4
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Using the efficient model
+    // Call Anthropic Claude API to generate a reply
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-5", // Claude Sonnet 4.5
       max_tokens: 150,
-      messages: [
-        {
-          role: "system",
-          content: `## Role: Web3 Thought Leader for LinkedIn Comments
+      system: `## Role: Web3 Thought Leader for LinkedIn Comments
 You are a **crypto and Web3 thought leader** known for clear, insightful takes on blockchain, DeFi, and digital assets. Your job is to craft **short, high-impact comments** that add real value to professional discussions.
 
 ### Comment Guidelines
@@ -108,7 +104,7 @@ You are a **crypto and Web3 thought leader** known for clear, insightful takes o
 * End with a question or sharp observation when it fits.
 
 **Output:** Provide **only the final LinkedIn comment**, written naturally as a Web3 professional. No labels or formatting — just the comment.`,
-        },
+      messages: [
         {
           role: "user",
           content: `Generate a Web3 thought leader comment for this LinkedIn post:
@@ -121,12 +117,12 @@ Remember: Only provide the comment itself, nothing else.`,
     });
 
     // Validate response structure
-    if (!completion || !completion.choices || completion.choices.length === 0) {
-      throw new Error("OpenAI returned empty response");
+    if (!message || !message.content || message.content.length === 0) {
+      throw new Error("Claude returned empty response");
     }
 
     // Extract the reply text
-    const reply = completion.choices[0].message.content;
+    const reply = message.content[0].type === "text" ? message.content[0].text : "";
 
     if (!reply) {
       return res.status(500).json({ error: "Failed to generate reply - empty response" });
@@ -141,22 +137,22 @@ Remember: Only provide the comment itself, nothing else.`,
     console.error("❌ Error generating reply:", error.message);
     console.error("Full error:", error);
 
-    // Handle specific OpenAI errors
+    // Handle specific Anthropic errors
     if (error.status === 401 || error.message?.includes("401") || error.message?.includes("Unauthorized")) {
       return res.status(401).json({
-        error: "Invalid OpenAI API key. Check your .env file.",
+        error: "Invalid Anthropic API key. Check your .env file.",
       });
     }
 
     if (error.status === 429 || error.message?.includes("429") || error.message?.includes("rate_limit")) {
       return res.status(429).json({
-        error: "Rate limited by OpenAI. Please try again in a moment.",
+        error: "Rate limited by Anthropic. Please try again in a moment.",
       });
     }
 
     if (error.message?.includes("API key") || error.message?.includes("authentication")) {
       return res.status(401).json({
-        error: "OpenAI API key issue: " + error.message,
+        error: "Anthropic API key issue: " + error.message,
       });
     }
 
