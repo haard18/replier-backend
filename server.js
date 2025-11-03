@@ -55,13 +55,13 @@ app.get("/health", (req, res) => {
 });
 
 /**
- * Generate reply endpoint
- * POST /generate
+ * Generate reply endpoint for LinkedIn
+ * POST /generate/linkedin
  * 
  * Request body: { text: "original post text" }
- * Response: plain text reply
+ * Response: plain text reply (Web3 thought leader tone)
  */
-app.post("/generate", async (req, res) => {
+app.post("/generate/linkedin", async (req, res) => {
   try {
     const { text } = req.body;
 
@@ -72,14 +72,14 @@ app.post("/generate", async (req, res) => {
       });
     }
 
-    console.log(`📝 Generating reply for: "${text.substring(0, 50)}..."`);
+    console.log(`📝 [LinkedIn] Generating reply for: "${text.substring(0, 50)}..."`);
 
     // Double-check Anthropic client exists
     if (!anthropic) {
       throw new Error("Anthropic client not initialized. Check your API key.");
     }
 
-    // Call Anthropic Claude API to generate a reply
+    // Call Anthropic Claude API to generate a LinkedIn reply
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-5", // Claude Sonnet 4.5
       max_tokens: 150,
@@ -128,13 +128,13 @@ Remember: Only provide the comment itself, nothing else.`,
       return res.status(500).json({ error: "Failed to generate reply - empty response" });
     }
 
-    console.log(`✅ Reply generated: "${reply.substring(0, 50)}..."`);
+    console.log(`✅ [LinkedIn] Reply generated: "${reply.substring(0, 50)}..."`);
 
     // Return the reply as plain text
     res.set("Content-Type", "text/plain");
     res.send(reply);
   } catch (error) {
-    console.error("❌ Error generating reply:", error.message);
+    console.error("❌ [LinkedIn] Error generating reply:", error.message);
     console.error("Full error:", error);
 
     // Handle specific Anthropic errors
@@ -159,6 +159,127 @@ Remember: Only provide the comment itself, nothing else.`,
     res.status(500).json({
       error: error.message || "An error occurred while generating the reply",
     });
+  }
+});
+
+/**
+ * Generate reply endpoint for Twitter/X
+ * POST /generate/twitter
+ * 
+ * Request body: { text: "original post text" }
+ * Response: plain text reply (quirky and fun tone, shorter)
+ */
+app.post("/generate/twitter", async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    // Validate input
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return res.status(400).json({
+        error: "Invalid input. Please provide a 'text' field with post content.",
+      });
+    }
+
+    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..."`);
+
+    // Double-check Anthropic client exists
+    if (!anthropic) {
+      throw new Error("Anthropic client not initialized. Check your API key.");
+    }
+
+    // Call Anthropic Claude API to generate a Twitter reply
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-5", // Claude Sonnet 3.5
+      max_tokens: 100, // Shorter for Twitter
+      system: `## Role: Quirky Web3 Personality for Twitter
+You are a **fun, witty, and quirky Web3 personality** on Twitter. Your replies are:
+* Short, punchy, and entertaining (1-2 sentences max)
+* Smart but casual — not trying too hard
+* Occasionally use clever wordplay or light humor related to crypto/tech
+* Include relevant emojis (but don't overdo it)
+* End with something that sparks conversation
+* No jargon-heavy corporate talk
+* Be authentic, slightly irreverent, but respectful
+
+**Tone Examples:** "haha love this energy 🔥" "this is the way ⛓️" "based take" "brb telling everyone" "ok but why though 👀"
+
+**Output:** Provide **only the tweet reply**, written naturally and conversationally. No explanations or labels — just the reply.`,
+      messages: [
+        {
+          role: "user",
+          content: `Generate a fun, quirky Twitter reply to this post:
+
+"${text}"
+
+Remember: Keep it short (1-2 sentences), witty, and use appropriate emojis. Only provide the reply itself, nothing else.`,
+        },
+      ],
+    });
+
+    // Validate response structure
+    if (!message || !message.content || message.content.length === 0) {
+      throw new Error("Claude returned empty response");
+    }
+
+    // Extract the reply text
+    const reply = message.content[0].type === "text" ? message.content[0].text : "";
+
+    if (!reply) {
+      return res.status(500).json({ error: "Failed to generate reply - empty response" });
+    }
+
+    console.log(`✅ [Twitter] Reply generated: "${reply.substring(0, 50)}..."`);
+
+    // Return the reply as plain text
+    res.set("Content-Type", "text/plain");
+    res.send(reply);
+  } catch (error) {
+    console.error("❌ [Twitter] Error generating reply:", error.message);
+    console.error("Full error:", error);
+
+    // Handle specific Anthropic errors
+    if (error.status === 401 || error.message?.includes("401") || error.message?.includes("Unauthorized")) {
+      return res.status(401).json({
+        error: "Invalid Anthropic API key. Check your .env file.",
+      });
+    }
+
+    if (error.status === 429 || error.message?.includes("429") || error.message?.includes("rate_limit")) {
+      return res.status(429).json({
+        error: "Rate limited by Anthropic. Please try again in a moment.",
+      });
+    }
+
+    if (error.message?.includes("API key") || error.message?.includes("authentication")) {
+      return res.status(401).json({
+        error: "Anthropic API key issue: " + error.message,
+      });
+    }
+
+    res.status(500).json({
+      error: error.message || "An error occurred while generating the reply",
+    });
+  }
+});
+
+/**
+ * Legacy endpoint - auto-detects platform based on referer or defaults to LinkedIn
+ * POST /generate
+ */
+app.post("/generate", async (req, res) => {
+  const referer = req.get("referer") || "";
+  const platform = referer.includes("x.com") || referer.includes("twitter.com") ? "twitter" : "linkedin";
+  
+  // Forward to appropriate endpoint
+  if (platform === "twitter") {
+    // Create a mock request and pass to Twitter handler
+    const originalUrl = req.url;
+    req.url = "/generate/twitter";
+    app._router.handle(req, res);
+  } else {
+    const originalUrl = req.url;
+    req.url = "/generate/linkedin";
+    app._router.handle(req, res);
   }
 });
 
