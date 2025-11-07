@@ -29,6 +29,23 @@ try {
   // Continue anyway - usage tracking will be skipped
 }
 
+// Import Supabase client for usage tracking
+let supabase;
+try {
+  const { createClient } = require("@supabase/supabase-js");
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
+    supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+    console.log("✅ Supabase client initialized");
+  } else {
+    console.warn("⚠️ Supabase not configured - usage tracking disabled");
+  }
+} catch (error) {
+  console.warn("⚠️ Supabase initialization failed:", error.message);
+}
+
 // Verify API key BEFORE initializing anything
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("❌ ERROR: ANTHROPIC_API_KEY is not set in .env file");
@@ -132,45 +149,162 @@ async function validateClerkToken(req, res, next) {
 app.use(validateClerkToken);
 
 /**
- * Helper function to track usage in Clerk user metadata
- * Updates the user's publicMetadata with usage stats
+ * Helper function to track usage in Supabase
+ * Updates daily and weekly counters for the user
+ * Returns updated usage stats
  */
-async function trackUsage(userId, platform = "api") {
-  if (!userId || !clerkClient) {
-    return;
+async function trackUsageInSupabase(userId, tone = "value") {
+  if (!userId || !supabase) {
+    console.warn("⚠️ Supabase or userId not available for tracking");
+    return null;
   }
 
   try {
-    // Get current user to check existing metadata
-    const user = await clerkClient.users.getUser(userId);
-    const currentMetadata = user.publicMetadata || {};
-    const currentUsage = currentMetadata.usage_count || 0;
-    const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-    const lastResetDate = currentMetadata.last_reset_date || currentDate;
+    // Get or create user usage record - use limit(1) instead of .single()
+    let { data: userData, error: selectError } = await supabase
+      .from("operator_usage")
+      .select("*")
+      .eq("user_id", userId)
+      .limit(1);
 
-    // Reset usage if it's a new day
-    let usageCount = currentUsage;
-    if (lastResetDate !== currentDate) {
-      usageCount = 0;
+    if (selectError) {
+      throw selectError;
     }
 
-    // Increment usage
-    usageCount += 1;
+    // If user doesn't exist, create a new record
+    if (!userData || userData.length === 0) {
+      // Get today's date in YYYY-MM-DD format for Postgres
+      const today = new Date().toISOString().split("T")[0];
+      
+      const { data: newUser, error: createError } = await supabase
+        .from("operator_usage")
+        .insert([
+          {
+            user_id: userId,
+            daily_goal: 10,
+            weekly_goal: 50,
+            replies_sent_today: 1,
+            replies_sent_week: 1,
+            last_reset_date: today,
+            last_reset_week_date: today
+          },
+        ])
+        .select()
+        .limit(1);
 
-    // Update user's public metadata with usage stats
-    await clerkClient.users.updateUserMetadata(userId, {
-      publicMetadata: {
-        ...currentMetadata,
-        usage_count: usageCount,
-        last_usage_date: new Date().toISOString(),
-        last_reset_date: currentDate,
-        last_platform: platform,
-      },
-    });
+      if (createError) throw createError;
+      if (!newUser || newUser.length === 0) throw new Error("Failed to create user record");
+      userData = newUser[0];
+      console.log(`📊 Created new user usage record for ${userId}`);
+    } else {
+      // Get the existing user record (first element from array)
+      const user = userData[0];
+      
+      // Get today's date in YYYY-MM-DD format
+      const today = new Date().toISOString().split("T")[0];
+      
+      // Build update object with simple increments
+      // The database trigger will handle resets automatically
+      const updateData = {
+        replies_sent_today: user.replies_sent_today + 1,
+        replies_sent_week: user.replies_sent_week + 1,
+        last_reset_date: today
+      };
 
-    console.log(`📊 [${platform.toUpperCase()}] Usage tracked for user ${userId}: ${usageCount} replies today`);
+      // Update the record - any resets will be handled by the database trigger
+      const { data: updatedUser, error: updateError } = await supabase
+        .from("operator_usage")
+        .update(updateData)
+        .eq("user_id", userId)
+        .select()
+        .limit(1);
+
+      if (updateError) throw updateError;
+      if (!updatedUser || updatedUser.length === 0) throw new Error("Failed to update user record");
+      userData = updatedUser[0];
+    }
+
+    console.log(
+      `📊 Usage tracked for user ${userId}: ${userData.replies_sent_today}/${userData.daily_goal} daily, ${userData.replies_sent_week}/${userData.weekly_goal} weekly`
+    );
+
+    return {
+      usage_count: userData.replies_sent_today,
+      daily_used: userData.replies_sent_today,
+      daily_goal: userData.daily_goal,
+      daily_remaining: Math.max(0, userData.daily_goal - userData.replies_sent_today),
+      weekly_used: userData.replies_sent_week,
+      weekly_goal: userData.weekly_goal,
+      weekly_remaining: Math.max(0, userData.weekly_goal - userData.replies_sent_week),
+    };
   } catch (error) {
-    console.warn(`⚠️ Usage tracking error for user ${userId}:`, error.message);
+    console.warn(`⚠️ Supabase tracking error for user ${userId}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Helper function to get current usage for a user
+ * Returns current daily and weekly quota usage
+ */
+async function getUserUsage(userId) {
+  if (!userId || !supabase) {
+    return null;
+  }
+
+  try {
+    // First ensure user exists
+    const { data: userData, error } = await supabase
+      .from("operator_usage")
+      .select()
+      .eq("user_id", userId)
+      .limit(1);
+
+    if (error) {
+      console.warn(`⚠️ Error fetching usage for ${userId}:`, error.message);
+      return null;
+    }
+
+    // If no record exists, create one with default values
+    if (!userData || userData.length === 0) {
+      const today = new Date().toISOString().split("T")[0];
+      
+      const { data: newUser, error: createError } = await supabase
+        .from("operator_usage")
+        .insert([{
+          user_id: userId,
+          daily_goal: 10,
+          weekly_goal: 50,
+          replies_sent_today: 0,
+          replies_sent_week: 0,
+          last_reset_date: today,
+          last_reset_week_date: today
+        }])
+        .select()
+        .limit(1);
+
+      if (createError) {
+        console.warn(`⚠️ Error creating usage for ${userId}:`, createError.message);
+        return null;
+      }
+
+      userData = newUser;
+    }
+
+    const user = userData[0];
+
+    return {
+      usage_count: user.replies_sent_today,
+      daily_used: user.replies_sent_today,
+      daily_goal: user.daily_goal,
+      daily_remaining: Math.max(0, user.daily_goal - user.replies_sent_today),
+      weekly_used: user.replies_sent_week,
+      weekly_goal: user.weekly_goal,
+      weekly_remaining: Math.max(0, user.weekly_goal - user.replies_sent_week)
+    };
+  } catch (error) {
+    console.warn(`⚠️ Error getting usage for ${userId}:`, error.message);
+    return null;
   }
 }
 
@@ -186,14 +320,14 @@ app.get("/health", (req, res) => {
  * Generate reply endpoint for LinkedIn
  * POST /generate/linkedin
  * 
- * Request body: { text: "original post text" }
- * Response: plain text reply (Web3 thought leader tone)
+ * Request body: { text: "original post text", tone: "funny" | "value" }
+ * Response: JSON with reply text and usage stats
  * 
  * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/linkedin", async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, tone = "value" } = req.body;
 
     // Validate input
     if (!text || typeof text !== "string" || text.trim().length === 0) {
@@ -202,7 +336,14 @@ app.post("/generate/linkedin", async (req, res) => {
       });
     }
 
-    console.log(`📝 [LinkedIn] Generating reply for: "${text.substring(0, 50)}..."`);
+    // Validate tone
+    if (!["funny", "value"].includes(tone)) {
+      return res.status(400).json({
+        error: "Invalid tone. Please use 'funny' or 'value'.",
+      });
+    }
+
+    console.log(`📝 [LinkedIn] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone})`);
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -212,11 +353,33 @@ app.post("/generate/linkedin", async (req, res) => {
       throw new Error("Anthropic client not initialized. Check your API key.");
     }
 
-    // Call Anthropic Claude API to generate a LinkedIn reply
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-5", // Claude Sonnet 4.5
-      max_tokens: 150,
-      system: `## Role: Web3 Thought Leader for LinkedIn Comments
+    // Build system prompt based on tone
+    let systemPrompt;
+    if (tone === "funny") {
+      systemPrompt = `## Role: Witty Web3 Thought Leader for LinkedIn Comments
+You are a **crypto and Web3 thought leader** known for witty, entertaining takes on blockchain, DeFi, and digital assets. Your job is to craft **short, clever comments** that make professionals smile and engage.
+
+### Comment Guidelines
+
+**Goal:** Deliver **concise, entertaining insights** — something that makes professionals laugh and share.
+
+**Response Angles:**
+1. Clever Technical Joke – Make a witty observation about the tech or market logic.
+2. Humorous Contrarian Take – Respectfully challenge a common assumption with humor.
+3. Funny Business Context – Link the post to broader industry trends with levity.
+4. Witty Observation – Share a sharp, clever takeaway.
+
+**Tone & Style:**
+* Witty and authentic — not trying too hard, genuinely entertaining.
+* 2–4 sentences max.
+* Light humor and personality (but stay professional enough for LinkedIn).
+* Clever wordplay when it fits naturally.
+* Emojis are OK if they enhance the joke (but use sparingly).
+* End with something memorable or funny.
+
+**Output:** Provide **only the final LinkedIn comment**, written naturally as a witty Web3 professional. No labels or formatting — just the comment.`;
+    } else {
+      systemPrompt = `## Role: Web3 Thought Leader for LinkedIn Comments
 You are a **crypto and Web3 thought leader** known for clear, insightful takes on blockchain, DeFi, and digital assets. Your job is to craft **short, high-impact comments** that add real value to professional discussions.
 
 ### Comment Guidelines
@@ -236,7 +399,14 @@ You are a **crypto and Web3 thought leader** known for clear, insightful takes o
 * Speak like a peer in the industry — concise, credible, and real.
 * End with a question or sharp observation when it fits.
 
-**Output:** Provide **only the final LinkedIn comment**, written naturally as a Web3 professional. No labels or formatting — just the comment.`,
+**Output:** Provide **only the final LinkedIn comment**, written naturally as a Web3 professional. No labels or formatting — just the comment.`;
+    }
+
+    // Call Anthropic Claude API to generate a LinkedIn reply
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 150,
+      system: systemPrompt,
       messages: [
         {
           role: "user",
@@ -264,13 +434,18 @@ Remember: Only provide the comment itself, nothing else.`,
     console.log(`✅ [LinkedIn] Reply generated: "${reply.substring(0, 50)}..."`);
 
     // Track usage if user is authenticated
+    let usageStats = null;
     if (req.auth?.userId) {
-      await trackUsage(req.auth.userId, "linkedin");
+      usageStats = await trackUsageInSupabase(req.auth.userId, tone);
     }
 
-    // Return the reply as plain text
-    res.set("Content-Type", "text/plain");
-    res.send(reply);
+    // Return the reply and usage stats
+    res.status(200).json({
+      reply: reply,
+      tone: tone,
+      platform: "linkedin",
+      usage: usageStats,
+    });
   } catch (error) {
     console.error("❌ [LinkedIn] Error generating reply:", error.message);
     console.error("Full error:", error);
@@ -304,14 +479,14 @@ Remember: Only provide the comment itself, nothing else.`,
  * Generate reply endpoint for Twitter/X
  * POST /generate/twitter
  * 
- * Request body: { text: "original post text" }
- * Response: plain text reply (quirky and fun tone, shorter)
+ * Request body: { text: "original post text", tone: "funny" | "value" }
+ * Response: JSON with reply text and usage stats
  * 
  * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/twitter", async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, tone = "funny" } = req.body;
 
     // Validate input
     if (!text || typeof text !== "string" || text.trim().length === 0) {
@@ -320,7 +495,14 @@ app.post("/generate/twitter", async (req, res) => {
       });
     }
 
-    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..."`);
+    // Validate tone
+    if (!["funny", "value"].includes(tone)) {
+      return res.status(400).json({
+        error: "Invalid tone. Please use 'funny' or 'value'.",
+      });
+    }
+
+    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone})`);
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -330,31 +512,51 @@ app.post("/generate/twitter", async (req, res) => {
       throw new Error("Anthropic client not initialized. Check your API key.");
     }
 
+    // Build system prompt based on tone
+    let systemPrompt;
+    if (tone === "funny") {
+      systemPrompt = `## Role: Hilarious Web3 Personality for Twitter
+You are a **fun, witty, and hilarious Web3 personality** on Twitter. Your replies are:
+* Short, punchy, and entertaining (1-2 sentences max)
+* Smart but casual — going for big laughs
+* Use clever wordplay, memes references, or witty observations related to crypto/tech
+* Include relevant emojis strategically
+* End with something that makes people retweet
+* Be authentic, slightly irreverent, and fun
+* Make them want to engage and share
+
+**Tone Examples:** "lmao this is the way 🔥" "based af" "giga chad energy" "tell me you're early without telling me you're early 👀" "not me 💀"
+
+**Output:** Provide **only the tweet reply**, written naturally and hilariously. No explanations — just the reply.`;
+    } else {
+      systemPrompt = `## Role: Insightful Web3 Voice for Twitter
+You are a **thoughtful and insightful Web3 voice** on Twitter. Your replies are:
+* Concise but valuable (1-2 sentences max)
+* Share real insights or perspective
+* Professional but casual — speak like a peer
+* Occasionally include relevant emojis
+* End with something thought-provoking
+* Build credibility and show expertise
+* Spark meaningful conversation
+
+**Tone Examples:** "this is the way ⛓️" "exactly - the market will price this in soon" "this is a fundamental shift in how we think about..." "key insight here �"
+
+**Output:** Provide **only the tweet reply**, written naturally and insightfully. No explanations — just the reply.`;
+    }
+
     // Call Anthropic Claude API to generate a Twitter reply
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-5", // Claude Sonnet 3.5
-      max_tokens: 100, // Shorter for Twitter
-      system: `## Role: Quirky Web3 Personality for Twitter
-You are a **fun, witty, and quirky Web3 personality** on Twitter. Your replies are:
-* Short, punchy, and entertaining (1-2 sentences max)
-* Smart but casual — not trying too hard
-* Occasionally use clever wordplay or light humor related to crypto/tech
-* Include relevant emojis (but don't overdo it)
-* End with something that sparks conversation
-* No jargon-heavy corporate talk
-* Be authentic, slightly irreverent, but respectful
-
-**Tone Examples:** "haha love this energy 🔥" "this is the way ⛓️" "based take" "brb telling everyone" "ok but why though 👀"
-
-**Output:** Provide **only the tweet reply**, written naturally and conversationally. No explanations or labels — just the reply.`,
+      model: "claude-sonnet-4-5",
+      max_tokens: 100,
+      system: systemPrompt,
       messages: [
         {
           role: "user",
-          content: `Generate a fun, quirky Twitter reply to this post:
+          content: `Generate a Web3 comment for this Twitter post:
 
 "${text}"
 
-Remember: Keep it short (1-2 sentences), witty, and use appropriate emojis. Only provide the reply itself, nothing else.`,
+Remember: Keep it short (1-2 sentences), engaging, and use appropriate emojis. Only provide the reply itself, nothing else.`,
         },
       ],
     });
@@ -374,13 +576,18 @@ Remember: Keep it short (1-2 sentences), witty, and use appropriate emojis. Only
     console.log(`✅ [Twitter] Reply generated: "${reply.substring(0, 50)}..."`);
 
     // Track usage if user is authenticated
+    let usageStats = null;
     if (req.auth?.userId) {
-      await trackUsage(req.auth.userId, "twitter");
+      usageStats = await trackUsageInSupabase(req.auth.userId, tone);
     }
 
-    // Return the reply as plain text
-    res.set("Content-Type", "text/plain");
-    res.send(reply);
+    // Return the reply and usage stats
+    res.status(200).json({
+      reply: reply,
+      tone: tone,
+      platform: "twitter",
+      usage: usageStats,
+    });
   } catch (error) {
     console.error("❌ [Twitter] Error generating reply:", error.message);
     console.error("Full error:", error);
@@ -411,6 +618,45 @@ Remember: Keep it short (1-2 sentences), witty, and use appropriate emojis. Only
 });
 
 /**
+ * Get user usage endpoint
+ * GET /usage
+ * 
+ * Returns current usage stats for the authenticated user
+ * Authorization: Bearer <clerk_token> (required)
+ */
+app.get("/usage", async (req, res) => {
+  try {
+    if (!req.auth?.userId) {
+      return res.status(401).json({
+        error: "Unauthorized - no authentication token provided",
+      });
+    }
+
+    const usage = await getUserUsage(req.auth.userId);
+
+    if (!usage) {
+      // Return default values if not found
+      return res.status(200).json({
+        usage_count: 0,
+        daily_used: 0,
+        daily_goal: 10,
+        daily_remaining: 10,
+        weekly_used: 0,
+        weekly_goal: 50,
+        weekly_remaining: 50,
+      });
+    }
+
+    res.status(200).json(usage);
+  } catch (error) {
+    console.error("❌ [Usage] Error fetching usage:", error.message);
+    res.status(500).json({
+      error: "Failed to fetch usage data",
+    });
+  }
+});
+
+/**
  * Legacy endpoint - auto-detects platform based on referer or defaults to LinkedIn
  * POST /generate
  */
@@ -418,17 +664,27 @@ app.post("/generate", async (req, res) => {
   const referer = req.get("referer") || "";
   const platform = referer.includes("x.com") || referer.includes("twitter.com") ? "twitter" : "linkedin";
   
-  // Forward to appropriate endpoint
+  console.log(`📝 [Generate] Routing to ${platform} endpoint`);
+  
+  // Forward to appropriate endpoint by calling the route handlers
   if (platform === "twitter") {
-    // Create a mock request and pass to Twitter handler
-    const originalUrl = req.url;
-    req.url = "/generate/twitter";
-    app._router.handle(req, res);
+    // Call Twitter handler
+    const { text, tone } = req.body;
+    req.body = { text, tone: tone || "funny" };
   } else {
-    const originalUrl = req.url;
-    req.url = "/generate/linkedin";
-    app._router.handle(req, res);
+    // Call LinkedIn handler
+    const { text, tone } = req.body;
+    req.body = { text, tone: tone || "value" };
   }
+  
+  // Use next() to proceed to the appropriate handler
+  // by modifying the request path
+  const originalPath = req.path;
+  req.path = `/generate/${platform}`;
+  req.url = `/generate/${platform}`;
+  
+  // Call the appropriate handler
+  app._router.handle(req, res);
 });
 
 /**
