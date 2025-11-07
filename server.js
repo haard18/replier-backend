@@ -307,7 +307,7 @@ async function getUserUsage(userId) {
         userData = newUser;
       }
     }
-
+    console.log(userData)
     const user = userData[0];
 
     return {
@@ -650,7 +650,7 @@ app.get("/usage", async (req, res) => {
     }
 
     const usage = await getUserUsage(req.auth.userId);
-
+    console.log(usage);
     if (!usage) {
       // Return default values if not found
       return res.status(200).json({
