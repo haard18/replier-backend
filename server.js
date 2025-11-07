@@ -254,7 +254,7 @@ async function getUserUsage(userId) {
 
   try {
     // First ensure user exists
-    const { data: userData, error } = await supabase
+    let { data: userData, error } = await supabase
       .from("operator_usage")
       .select()
       .eq("user_id", userId)
@@ -284,11 +284,28 @@ async function getUserUsage(userId) {
         .limit(1);
 
       if (createError) {
-        console.warn(`⚠️ Error creating usage for ${userId}:`, createError.message);
-        return null;
+        // If duplicate key error, it means another request created the record
+        // Try fetching again
+        if (createError.code === '23505') {
+          const { data: retryData, error: retryError } = await supabase
+            .from("operator_usage")
+            .select()
+            .eq("user_id", userId)
+            .limit(1);
+          
+          if (retryError || !retryData || retryData.length === 0) {
+            console.warn(`⚠️ Error fetching usage after duplicate key for ${userId}`);
+            return null;
+          }
+          
+          userData = retryData;
+        } else {
+          console.warn(`⚠️ Error creating usage for ${userId}:`, createError.message);
+          return null;
+        }
+      } else {
+        userData = newUser;
       }
-
-      userData = newUser;
     }
 
     const user = userData[0];
