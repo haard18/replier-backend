@@ -344,10 +344,10 @@ app.get("/health", (req, res) => {
  */
 app.post("/generate/linkedin", async (req, res) => {
   try {
-    const { text, tone = "value" } = req.body;
+    const { text, tone = "value", emojiBool } = req.body;
 
     // Validate input
-    if (!text || typeof text !== "string" || text.trim().length === 0) {
+    if (!text || typeof text !== "string" || text.trim().length === 0 || emojiBool === undefined) {
       return res.status(400).json({
         error: "Invalid input. Please provide a 'text' field with post content.",
       });
@@ -391,7 +391,8 @@ You are a **crypto and Web3 thought leader** known for witty, entertaining takes
 * 2–4 sentences max.
 * Light humor and personality (but stay professional enough for LinkedIn).
 * Clever wordplay when it fits naturally.
-* Emojis are OK if they enhance the joke (but use sparingly).
+* Emojis are ${emojiBool ? "OK" : "not allowed"} if they enhance the joke (none if they feel forced).
+* Strictly no em-dashes or excessive punctuation.
 * End with something memorable or funny.
 
 **Output:** Provide **only the final LinkedIn comment**, written naturally as a witty Web3 professional. No labels or formatting — just the comment.`;
@@ -412,7 +413,9 @@ You are a **crypto and Web3 thought leader** known for clear, insightful takes o
 **Tone & Style:**
 * Professional and authentic — not corporate, not hyped.
 * 2–4 sentences max.
-* No emojis or hashtags.
+* Emojis are ${emojiBool ? "OK" : "not allowed"} if they fit naturally (none if they feel forced).
+* Clear and direct — avoid jargon or fluff.
+* Strictly no em-dashes or excessive punctuation.
 * Speak like a peer in the industry — concise, credible, and real.
 * End with a question or sharp observation when it fits.
 
