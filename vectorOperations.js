@@ -74,6 +74,12 @@ async function retrieveRelevantChunks(
   similarityThreshold = 0.7
 ) {
   try {
+    // Validate that companyId is a valid UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(companyId)) {
+      throw new Error(`Invalid company ID format: ${companyId}. Must be a valid UUID. Did you visit the Knowledge page to create a company?`);
+    }
+
     // Use the search_company_knowledge function we created in the migration
     const { data, error } = await supabase.rpc("search_company_knowledge", {
       p_company_id: companyId,

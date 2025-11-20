@@ -414,9 +414,12 @@ app.post("/generate/linkedin", async (req, res) => {
         });
         console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
       } catch (error) {
-        console.warn(`⚠️ [RAG] Error building context:`, error.message);
+        console.warn(`⚠️ [RAG] Error building context for company ${companyId}:`, error.message);
+        console.warn(`💡 Hint: Visit the Knowledge page first to create a company and upload documents.`);
         // Continue without RAG context
       }
+    } else if (companyId && (!supabase || !openai)) {
+      console.warn(`⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`);
     }
 
     // Build system prompt based on tone and web3 setting
@@ -760,9 +763,12 @@ app.post("/generate/twitter", async (req, res) => {
         });
         console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
       } catch (error) {
-        console.warn(`⚠️ [RAG] Error building context:`, error.message);
+        console.warn(`⚠️ [RAG] Error building context for company ${companyId}:`, error.message);
+        console.warn(`💡 Hint: Visit the Knowledge page first to create a company and upload documents.`);
         // Continue without RAG context
       }
+    } else if (companyId && (!supabase || !openai)) {
+      console.warn(`⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`);
     }
 
     // Build system prompt based on tone and web3 setting
