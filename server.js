@@ -69,6 +69,35 @@ try {
   process.exit(1);
 }
 
+// Initialize OpenAI client for embeddings
+let openai;
+try {
+  const OpenAI = require("openai");
+  if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    console.log("✅ OpenAI client initialized for embeddings");
+  } else {
+    console.warn("⚠️ OPENAI_API_KEY not set - RAG features disabled");
+  }
+} catch (error) {
+  console.warn("⚠️ OpenAI initialization failed:", error.message);
+}
+
+// Import document processing and vector operations modules
+const documentProcessor = require("./documentProcessor");
+const vectorOperations = require("./vectorOperations");
+
+// Initialize multer for file uploads
+const multer = require("multer");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+});
+
 // Initialize Express app
 const app = express();
 const PORT = 3000;
@@ -344,7 +373,7 @@ app.get("/health", (req, res) => {
  */
 app.post("/generate/linkedin", async (req, res) => {
   try {
-    const { text, tone = "value", emojiBool, web3Bool = true } = req.body;
+    const { text, tone = "value", emojiBool, web3Bool = true, companyId } = req.body;
 
     // Validate input
     if (!text || typeof text !== "string" || text.trim().length === 0 || emojiBool === undefined) {
@@ -368,6 +397,26 @@ app.post("/generate/linkedin", async (req, res) => {
     // Double-check Anthropic client exists
     if (!anthropic) {
       throw new Error("Anthropic client not initialized. Check your API key.");
+    }
+
+    // Build RAG context if companyId provided
+    let ragContext = null;
+    if (companyId && supabase && openai) {
+      try {
+        console.log(`🧠 [RAG] Building context for company ${companyId}`);
+        ragContext = await vectorOperations.buildRagContext({
+          supabase,
+          openaiClient: openai,
+          companyId,
+          postText: text,
+          maxChunks: 10,
+          similarityThreshold: 0.7,
+        });
+        console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
+      } catch (error) {
+        console.warn(`⚠️ [RAG] Error building context:`, error.message);
+        // Continue without RAG context
+      }
     }
 
     // Build system prompt based on tone and web3 setting
@@ -569,6 +618,21 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     }
 
+    // Enhance system prompt with RAG context if available
+    if (ragContext && ragContext.hasContext) {
+      systemPrompt += `\n\n---\n\n## IMPORTANT: Company-Specific Context\n\n`;
+      
+      if (ragContext.formattedVoice) {
+        systemPrompt += `### Company Voice & Brand Guidelines:\n${ragContext.formattedVoice}\n\n`;
+      }
+      
+      if (ragContext.formattedChunks) {
+        systemPrompt += `### Relevant Company Knowledge:\nUse the following information from the company's knowledge base to inform your reply. Only reference this if relevant to the post.\n\n${ragContext.formattedChunks}\n\n`;
+      }
+      
+      systemPrompt += `**CRITICAL:** Align your reply with the company's voice and use relevant knowledge naturally. Do NOT hallucinate facts outside the provided context.`;
+    }
+
     // Call Anthropic Claude API to generate a LinkedIn reply
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
@@ -655,7 +719,7 @@ Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
  */
 app.post("/generate/twitter", async (req, res) => {
   try {
-    const { text, tone, emojiBool, web3Bool = true } = req.body;
+    const { text, tone, emojiBool, web3Bool = true, companyId } = req.body;
 
     // Validate input
     if (!text || typeof text !== "string" || text.trim().length === 0|| emojiBool === undefined) {
@@ -679,6 +743,26 @@ app.post("/generate/twitter", async (req, res) => {
     // Double-check Anthropic client exists
     if (!anthropic) {
       throw new Error("Anthropic client not initialized. Check your API key.");
+    }
+
+    // Build RAG context if companyId provided
+    let ragContext = null;
+    if (companyId && supabase && openai) {
+      try {
+        console.log(`🧠 [RAG] Building context for company ${companyId}`);
+        ragContext = await vectorOperations.buildRagContext({
+          supabase,
+          openaiClient: openai,
+          companyId,
+          postText: text,
+          maxChunks: 8, // Slightly fewer for Twitter's shorter format
+          similarityThreshold: 0.7,
+        });
+        console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
+      } catch (error) {
+        console.warn(`⚠️ [RAG] Error building context:`, error.message);
+        // Continue without RAG context
+      }
     }
 
     // Build system prompt based on tone and web3 setting
@@ -878,6 +962,21 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
 **Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
     }
 
+    // Enhance system prompt with RAG context if available
+    if (ragContext && ragContext.hasContext) {
+      systemPrompt += `\n\n---\n\n## IMPORTANT: Company-Specific Context\n\n`;
+      
+      if (ragContext.formattedVoice) {
+        systemPrompt += `### Company Voice & Brand Guidelines:\n${ragContext.formattedVoice}\n\n`;
+      }
+      
+      if (ragContext.formattedChunks) {
+        systemPrompt += `### Relevant Company Knowledge:\nUse the following information from the company's knowledge base to inform your reply. Only reference this if relevant to the tweet.\n\n${ragContext.formattedChunks}\n\n`;
+      }
+      
+      systemPrompt += `**CRITICAL:** Align your reply with the company's voice and use relevant knowledge naturally. Do NOT hallucinate facts outside the provided context.`;
+    }
+
     // Call Anthropic Claude API to generate a Twitter reply
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
@@ -1023,17 +1122,558 @@ app.post("/generate", async (req, res) => {
   app._router.handle(req, res);
 });
 
+// ==========================================
+// COMPANY KNOWLEDGE & RAG ENDPOINTS
+// ==========================================
+
+/**
+ * Create or get company for a user
+ * POST /company/ensure
+ * 
+ * Request: { user_id: string, name?: string }
+ * Response: { company_id: string }
+ */
+app.post("/company/ensure", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const userId = req.auth.userId;
+  const { name } = req.body;
+
+  try {
+    // Check if user already has a company
+    const { data: existingCompany, error: checkError } = await supabase
+      .from("companies")
+      .select("id")
+      .eq("owner_user_id", userId)
+      .limit(1);
+
+    if (checkError) {
+      throw checkError;
+    }
+
+    // If company exists, return it
+    if (existingCompany && existingCompany.length > 0) {
+      return res.status(200).json({
+        company_id: existingCompany[0].id,
+        existed: true,
+      });
+    }
+
+    // Create new company
+    const { data: newCompany, error: createError } = await supabase
+      .from("companies")
+      .insert([
+        {
+          owner_user_id: userId,
+          name: name || `${userId}'s Company`,
+          description: "Auto-created company for knowledge base",
+        },
+      ])
+      .select()
+      .single();
+
+    if (createError) {
+      throw createError;
+    }
+
+    // Add user as owner in memberships
+    await supabase
+      .from("user_company_memberships")
+      .insert([
+        {
+          user_id: userId,
+          company_id: newCompany.id,
+          role: "owner",
+        },
+      ]);
+
+    console.log(`✅ Created company ${newCompany.id} for user ${userId}`);
+
+    res.status(201).json({
+      company_id: newCompany.id,
+      existed: false,
+    });
+  } catch (error) {
+    console.error("❌ [Ensure Company] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to ensure company" });
+  }
+});
+
+/**
+ * Upload document to company knowledge base
+ * POST /company/:companyId/upload
+ * 
+ * Request: multipart/form-data with 'file' field
+ * Response: { document_id, chunks_created, status }
+ */
+app.post("/company/:companyId/upload", upload.single("file"), async (req, res) => {
+  if (!supabase || !openai) {
+    return res.status(503).json({
+      error: "RAG features not available - Supabase or OpenAI not configured",
+    });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    console.log(`📤 [Upload] Processing file: ${file.originalname} for company ${companyId}`);
+
+    // Determine file type
+    const fileExtension = file.originalname.split(".").pop().toLowerCase();
+    const supportedTypes = ["pdf", "docx", "txt", "md"];
+
+    if (!supportedTypes.includes(fileExtension)) {
+      return res.status(400).json({
+        error: `Unsupported file type: ${fileExtension}. Supported: ${supportedTypes.join(", ")}`,
+      });
+    }
+
+    // Create document record
+    const { data: document, error: docError } = await supabase
+      .from("company_documents")
+      .insert([
+        {
+          company_id: companyId,
+          filename: file.originalname,
+          file_type: fileExtension,
+          file_size: file.size,
+          status: "processing",
+        },
+      ])
+      .select()
+      .single();
+
+    if (docError) {
+      throw docError;
+    }
+
+    console.log(`📄 Created document record: ${document.id}`);
+
+    // Process document in background
+    processDocumentAsync(document.id, file.buffer, fileExtension, companyId);
+
+    res.status(202).json({
+      document_id: document.id,
+      status: "processing",
+      message: "Document is being processed. Check status with GET /company/:companyId/documents/:documentId",
+    });
+  } catch (error) {
+    console.error("❌ [Upload] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to upload document" });
+  }
+});
+
+/**
+ * Upload URL to company knowledge base
+ * POST /company/:companyId/upload-url
+ * 
+ * Request: { url: "https://example.com" }
+ * Response: { document_id, chunks_created, status }
+ */
+app.post("/company/:companyId/upload-url", async (req, res) => {
+  if (!supabase || !openai) {
+    return res.status(503).json({
+      error: "RAG features not available - Supabase or OpenAI not configured",
+    });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+  const { url } = req.body;
+
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "URL is required" });
+  }
+
+  try {
+    console.log(`📤 [Upload URL] Processing URL: ${url} for company ${companyId}`);
+
+    // Create document record
+    const { data: document, error: docError } = await supabase
+      .from("company_documents")
+      .insert([
+        {
+          company_id: companyId,
+          filename: url,
+          file_type: "url",
+          source_url: url,
+          status: "processing",
+        },
+      ])
+      .select()
+      .single();
+
+    if (docError) {
+      throw docError;
+    }
+
+    console.log(`📄 Created document record: ${document.id}`);
+
+    // Process URL in background
+    processUrlAsync(document.id, url, companyId);
+
+    res.status(202).json({
+      document_id: document.id,
+      status: "processing",
+      message: "URL is being processed. Check status with GET /company/:companyId/documents/:documentId",
+    });
+  } catch (error) {
+    console.error("❌ [Upload URL] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to upload URL" });
+  }
+});
+
+/**
+ * Get company knowledge base status
+ * GET /company/:companyId/status
+ * 
+ * Response: { total_documents, total_chunks, total_tokens, total_storage_bytes, last_updated, voice_settings }
+ */
+app.get("/company/:companyId/status", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+
+  try {
+    // Get stats
+    const stats = await vectorOperations.getCompanyStats(supabase, companyId);
+
+    // Get voice settings
+    const voiceSettings = await vectorOperations.getCompanyVoiceSettings(
+      supabase,
+      companyId
+    );
+
+    res.status(200).json({
+      ...stats,
+      voice_settings: voiceSettings,
+    });
+  } catch (error) {
+    console.error("❌ [Status] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to get status" });
+  }
+});
+
+/**
+ * Get all documents for a company
+ * GET /company/:companyId/documents
+ * 
+ * Response: { documents: [...] }
+ */
+app.get("/company/:companyId/documents", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from("company_documents")
+      .select("*")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    res.status(200).json({ documents: data });
+  } catch (error) {
+    console.error("❌ [Documents] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to get documents" });
+  }
+});
+
+/**
+ * Get single document details
+ * GET /company/:companyId/documents/:documentId
+ * 
+ * Response: { document: {...} }
+ */
+app.get("/company/:companyId/documents/:documentId", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId, documentId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from("company_documents")
+      .select("*")
+      .eq("id", documentId)
+      .eq("company_id", companyId)
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    res.status(200).json({ document: data });
+  } catch (error) {
+    console.error("❌ [Document] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to get document" });
+  }
+});
+
+/**
+ * Delete a document and its chunks
+ * DELETE /company/:companyId/documents/:documentId
+ * 
+ * Response: { success: true }
+ */
+app.delete("/company/:companyId/documents/:documentId", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId, documentId } = req.params;
+
+  try {
+    // Delete document (chunks will cascade)
+    const { error } = await supabase
+      .from("company_documents")
+      .delete()
+      .eq("id", documentId)
+      .eq("company_id", companyId);
+
+    if (error) {
+      throw error;
+    }
+
+    res.status(200).json({ success: true, message: "Document deleted" });
+  } catch (error) {
+    console.error("❌ [Delete Document] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to delete document" });
+  }
+});
+
+/**
+ * Get company voice settings
+ * GET /company/:companyId/settings
+ * 
+ * Response: { voice_settings: {...} }
+ */
+app.get("/company/:companyId/settings", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+
+  try {
+    const settings = await vectorOperations.getCompanyVoiceSettings(
+      supabase,
+      companyId
+    );
+
+    res.status(200).json({ voice_settings: settings });
+  } catch (error) {
+    console.error("❌ [Get Settings] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to get settings" });
+  }
+});
+
+/**
+ * Update company voice settings
+ * PUT /company/:companyId/settings
+ * 
+ * Request: { voice_guidelines, brand_tone, positioning, metadata }
+ * Response: { voice_settings: {...} }
+ */
+app.put("/company/:companyId/settings", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { companyId } = req.params;
+  const settings = req.body;
+
+  try {
+    const updatedSettings = await vectorOperations.upsertCompanyVoiceSettings(
+      supabase,
+      companyId,
+      settings
+    );
+
+    res.status(200).json({ voice_settings: updatedSettings });
+  } catch (error) {
+    console.error("❌ [Update Settings] Error:", error);
+    res.status(500).json({ error: error.message || "Failed to update settings" });
+  }
+});
+
+// ==========================================
+// BACKGROUND PROCESSING FUNCTIONS
+// ==========================================
+
+/**
+ * Process document asynchronously (runs in background)
+ */
+async function processDocumentAsync(documentId, fileBuffer, fileType, companyId) {
+  try {
+    console.log(`🔄 Processing document ${documentId}...`);
+
+    // Process document
+    const result = await documentProcessor.processDocument(fileBuffer, fileType);
+
+    // Generate embeddings for all chunks
+    console.log(`🧠 Generating embeddings for ${result.chunks.length} chunks...`);
+    const chunkTexts = result.chunks.map((c) => c.content);
+    const embeddings = await documentProcessor.generateEmbeddingsBatch(
+      chunkTexts,
+      openai
+    );
+
+    // Store chunks
+    console.log(`💾 Storing chunks in vector database...`);
+    const chunksStored = await vectorOperations.storeChunks(
+      supabase,
+      companyId,
+      documentId,
+      result.chunks,
+      embeddings
+    );
+
+    // Update document status
+    await supabase
+      .from("company_documents")
+      .update({
+        status: "completed",
+        total_chunks: chunksStored,
+        total_tokens: result.totalTokens,
+      })
+      .eq("id", documentId);
+
+    console.log(`✅ Document ${documentId} processed successfully`);
+  } catch (error) {
+    console.error(`❌ Error processing document ${documentId}:`, error);
+
+    // Update document with error
+    await supabase
+      .from("company_documents")
+      .update({
+        status: "failed",
+        error_message: error.message,
+      })
+      .eq("id", documentId);
+  }
+}
+
+/**
+ * Process URL asynchronously (runs in background)
+ */
+async function processUrlAsync(documentId, url, companyId) {
+  try {
+    console.log(`🔄 Processing URL ${documentId}...`);
+
+    // Process URL
+    const result = await documentProcessor.processUrl(url);
+
+    // Generate embeddings for all chunks
+    console.log(`🧠 Generating embeddings for ${result.chunks.length} chunks...`);
+    const chunkTexts = result.chunks.map((c) => c.content);
+    const embeddings = await documentProcessor.generateEmbeddingsBatch(
+      chunkTexts,
+      openai
+    );
+
+    // Store chunks
+    console.log(`💾 Storing chunks in vector database...`);
+    const chunksStored = await vectorOperations.storeChunks(
+      supabase,
+      companyId,
+      documentId,
+      result.chunks,
+      embeddings
+    );
+
+    // Update document status
+    await supabase
+      .from("company_documents")
+      .update({
+        status: "completed",
+        total_chunks: chunksStored,
+        total_tokens: result.totalTokens,
+      })
+      .eq("id", documentId);
+
+    console.log(`✅ URL ${documentId} processed successfully`);
+  } catch (error) {
+    console.error(`❌ Error processing URL ${documentId}:`, error);
+
+    // Update document with error
+    await supabase
+      .from("company_documents")
+      .update({
+        status: "failed",
+        error_message: error.message,
+      })
+      .eq("id", documentId);
+  }
+}
+
 /**
  * Root endpoint - provides API documentation
  */
 app.get("/", (req, res) => {
   res.json({
     name: "AI Reply Generator Backend",
-    version: "1.0.0",
+    version: "2.0.0",
     endpoints: {
       health: "GET /health - Check if backend is running",
-      generate:
-        "POST /generate - Generate a reply (body: { text: 'post text' })",
+      generate: "POST /generate - Generate a reply (body: { text: 'post text' })",
+      usage: "GET /usage - Get current usage stats",
+      companyUpload: "POST /company/:id/upload - Upload document to company knowledge",
+      companyUploadUrl: "POST /company/:id/upload-url - Add URL to company knowledge",
+      companyStatus: "GET /company/:id/status - Get company knowledge stats",
+      companyDocuments: "GET /company/:id/documents - List company documents",
+      companySettings: "GET /company/:id/settings - Get company voice settings",
     },
     docs: "See server.js for more information",
   });
