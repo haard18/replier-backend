@@ -635,7 +635,7 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 
     // Call Anthropic Claude API to generate a LinkedIn reply
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250929",
       max_tokens: 200,
       system: systemPrompt,
       messages: [
@@ -979,7 +979,7 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
 
     // Call Anthropic Claude API to generate a Twitter reply
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250929",
       max_tokens: 120,
       system: systemPrompt,
       messages: [
