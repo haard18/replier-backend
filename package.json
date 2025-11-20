@@ -17,6 +17,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.26.1",
     "@clerk/backend": "^2.19.1",
