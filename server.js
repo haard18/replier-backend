@@ -738,7 +738,7 @@ app.post("/generate/twitter", async (req, res) => {
       });
     }
 
-    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool})`);
+    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool}) with companyId: ${companyId}`);
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -750,7 +750,7 @@ app.post("/generate/twitter", async (req, res) => {
 
     // Build RAG context if companyId provided
     let ragContext = null;
-    if (companyId && supabase && openai) {
+    if (companyId ) {
       try {
         console.log(`🧠 [RAG] Building context for company ${companyId}`);
         ragContext = await vectorOperations.buildRagContext({
