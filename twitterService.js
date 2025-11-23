@@ -102,14 +102,23 @@ async function fetchTweets(username, maxTweets = 150) {
       }
 
       if (response.data.status === 'error') {
-        throw new Error(response.data.message || 'Twitter API returned an error');
+        throw new Error(response.data.msg || response.data.message || 'Twitter API returned an error');
       }
 
       if (response.data.status !== 'success') {
         console.warn('⚠️ Unexpected API status:', response.data.status);
       }
 
-      const { tweets, has_next_page, next_cursor } = response.data;
+      // The actual response structure is: { status, code, msg, data: { tweets, pin_tweet } }
+      const responseData = response.data.data || response.data;
+      const tweets = responseData.tweets;
+      
+      // Note: Twitter.io API doesn't return has_next_page/next_cursor in the same way
+      // It's inside the data object or not present at all
+      const has_next_page = responseData.has_next_page !== undefined 
+        ? responseData.has_next_page 
+        : tweets && tweets.length === 20; // Assume more if we got 20
+      const next_cursor = responseData.next_cursor || '';
 
       if (!tweets) {
         console.error('❌ No tweets field in response:', JSON.stringify(response.data, null, 2));
