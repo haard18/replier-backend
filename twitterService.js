@@ -45,6 +45,7 @@ function extractUsername(input) {
 /**
  * Fetch tweets from Twitter.io API
  * Returns array of clean tweet texts (no retweets, no replies, no link-only posts)
+ * API Documentation: https://docs.twitterapi.io/api-reference/endpoint/get_user_last_tweets
  * 
  * @param {string} username - Twitter username (without @)
  * @param {number} maxTweets - Maximum number of tweets to fetch (default: 150)
@@ -58,31 +59,72 @@ async function fetchTweets(username, maxTweets = 150) {
   try {
     console.log(`🐦 Fetching tweets for @${username}...`);
 
-    // Twitter.io API endpoint
-    const apiUrl = `https://api.twitter.io/users/${username}/tweets`;
-    
-    const response = await axios.get(apiUrl, {
-      params: {
-        max_results: Math.min(maxTweets, 200), // API limit
-        exclude: 'retweets,replies', // Exclude RTs and replies
-      },
-      headers: {
-        'Accept': 'application/json',
-        // Add API key if needed in production
-        // 'Authorization': `Bearer ${process.env.TWITTER_IO_API_KEY}`
-      },
-      timeout: 15000, // 15 second timeout
-    });
+    const allTweets = [];
+    let cursor = '';
+    let hasNextPage = true;
+    let pagesLoaded = 0;
+    const maxPages = Math.ceil(maxTweets / 20); // API returns up to 20 tweets per page
 
-    if (!response.data || !response.data.data) {
-      throw new Error('Invalid response from Twitter API');
+    // Paginate through tweets until we have enough or no more pages
+    while (hasNextPage && allTweets.length < maxTweets && pagesLoaded < maxPages) {
+      const params = {
+        userName: username, // Use userName parameter (not userId)
+        includeReplies: false, // Exclude replies
+      };
+
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const response = await axios.get('https://api.twitterapi.io/twitter/user/last_tweets', {
+        params,
+        headers: {
+          'X-API-Key': process.env.TWITTER_IO_API_KEY || '',
+          'Accept': 'application/json',
+        },
+        timeout: 15000, // 15 second timeout
+      });
+
+      // Check response structure according to API docs
+      if (!response.data || response.data.status !== 'success') {
+        throw new Error(response.data?.message || 'Invalid response from Twitter API');
+      }
+
+      const { tweets, has_next_page, next_cursor } = response.data;
+
+      if (!tweets || !Array.isArray(tweets)) {
+        throw new Error('Invalid tweets data from Twitter API');
+      }
+
+      console.log(`📄 Loaded page ${pagesLoaded + 1}: ${tweets.length} tweets`);
+
+      // Filter out retweets and replies, add to collection
+      const filteredTweets = tweets.filter(tweet => {
+        // Skip if it's a retweet (has retweeted_tweet field)
+        if (tweet.retweeted_tweet) return false;
+        
+        // Skip if it's a reply (isReply is true)
+        if (tweet.isReply) return false;
+        
+        return true;
+      });
+
+      allTweets.push(...filteredTweets);
+      
+      hasNextPage = has_next_page;
+      cursor = next_cursor || '';
+      pagesLoaded++;
+
+      // Add small delay between requests to be respectful
+      if (hasNextPage && allTweets.length < maxTweets) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
-    const tweets = response.data.data;
-    console.log(`✅ Fetched ${tweets.length} tweets from @${username}`);
+    console.log(`✅ Fetched ${allTweets.length} original tweets from @${username}`);
 
     // Clean and filter tweets
-    const cleanTweets = tweets
+    const cleanTweets = allTweets
       .map(tweet => tweet.text || '')
       .filter(text => {
         // Remove empty tweets
@@ -106,6 +148,10 @@ async function fetchTweets(username, maxTweets = 150) {
 
     console.log(`✅ Cleaned to ${cleanTweets.length} usable tweets`);
 
+    if (cleanTweets.length === 0) {
+      throw new Error(`No usable tweets found for @${username}. User may have very few original posts.`);
+    }
+
     // Return up to requested number
     return cleanTweets.slice(0, maxTweets);
   } catch (error) {
@@ -120,7 +166,10 @@ async function fetchTweets(username, maxTweets = 150) {
         throw new Error('Twitter API rate limit reached. Please try again later.');
       }
       if (error.response.status === 401 || error.response.status === 403) {
-        throw new Error('Twitter API authentication failed. Check API credentials.');
+        throw new Error('Twitter API authentication failed. Check TWITTER_IO_API_KEY in .env');
+      }
+      if (error.response.status === 400) {
+        throw new Error(`Invalid request: ${error.response.data?.message || 'Bad request'}`);
       }
     }
 
