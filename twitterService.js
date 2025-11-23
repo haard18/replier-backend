@@ -56,8 +56,16 @@ async function fetchTweets(username, maxTweets = 150) {
     throw new Error('Username is required');
   }
 
+  // Check for API key
+  if (!process.env.TWITTER_IO_API_KEY) {
+    console.warn('⚠️ TWITTER_IO_API_KEY not found in environment variables');
+    console.warn('💡 Get your API key from https://twitterapi.io/');
+    throw new Error('TWITTER_IO_API_KEY is required. Sign up at https://twitterapi.io/ to get your API key.');
+  }
+
   try {
     console.log(`🐦 Fetching tweets for @${username}...`);
+    console.log(`🔑 Using API key: ${process.env.TWITTER_IO_API_KEY.substring(0, 8)}...`);
 
     const allTweets = [];
     let cursor = '';
@@ -85,15 +93,32 @@ async function fetchTweets(username, maxTweets = 150) {
         timeout: 15000, // 15 second timeout
       });
 
+      // Log response for debugging
+      console.log(`📡 API Response status: ${response.data?.status}`);
+
       // Check response structure according to API docs
-      if (!response.data || response.data.status !== 'success') {
-        throw new Error(response.data?.message || 'Invalid response from Twitter API');
+      if (!response.data) {
+        throw new Error('Empty response from Twitter API');
+      }
+
+      if (response.data.status === 'error') {
+        throw new Error(response.data.message || 'Twitter API returned an error');
+      }
+
+      if (response.data.status !== 'success') {
+        console.warn('⚠️ Unexpected API status:', response.data.status);
       }
 
       const { tweets, has_next_page, next_cursor } = response.data;
 
-      if (!tweets || !Array.isArray(tweets)) {
-        throw new Error('Invalid tweets data from Twitter API');
+      if (!tweets) {
+        console.error('❌ No tweets field in response:', JSON.stringify(response.data, null, 2));
+        throw new Error('No tweets data in API response. Check API key and rate limits.');
+      }
+
+      if (!Array.isArray(tweets)) {
+        console.error('❌ Tweets is not an array:', typeof tweets);
+        throw new Error('Invalid tweets data structure from Twitter API');
       }
 
       console.log(`📄 Loaded page ${pagesLoaded + 1}: ${tweets.length} tweets`);
