@@ -399,6 +399,26 @@ app.post("/generate/linkedin", async (req, res) => {
       throw new Error("Anthropic client not initialized. Check your API key.");
     }
 
+    // Fetch operator tone profile if available (Twitter-based personalization)
+    let operatorTone = null;
+    if (req.auth?.userId && supabase) {
+      try {
+        const { data: toneData } = await supabase
+          .from("operator_tones")
+          .select("tone_json")
+          .eq("operator_id", req.auth.userId)
+          .single();
+        
+        if (toneData && toneData.tone_json) {
+          operatorTone = toneData.tone_json;
+          console.log(`✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`);
+        }
+      } catch (error) {
+        // Tone profile is optional, continue without it
+        console.log(`ℹ️ [Tone] No tone profile found for ${req.auth.userId}`);
+      }
+    }
+
     // Build RAG context if companyId provided
     let ragContext = null;
     if (companyId && supabase && openai) {
@@ -621,6 +641,14 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     }
 
+    // Enhance system prompt with operator tone profile if available
+    if (operatorTone) {
+      systemPrompt += `\n\n---\n\n## CRITICAL: Personal Writing Style\n\n`;
+      systemPrompt += `You must write in the operator's authentic voice. This is their actual writing style from Twitter:\n\n`;
+      systemPrompt += toneService.formatToneForPrompt(operatorTone);
+      systemPrompt += `\n**IMPORTANT:** Replicate this exact writing style while following the role guidelines above. The response should sound like THIS person wrote it.`;
+    }
+
     // Enhance system prompt with RAG context if available
     if (ragContext && ragContext.hasContext) {
       systemPrompt += `\n\n---\n\n## IMPORTANT: Company-Specific Context\n\n`;
@@ -746,6 +774,26 @@ app.post("/generate/twitter", async (req, res) => {
     // Double-check Anthropic client exists
     if (!anthropic) {
       throw new Error("Anthropic client not initialized. Check your API key.");
+    }
+
+    // Fetch operator tone profile if available (Twitter-based personalization)
+    let operatorTone = null;
+    if (req.auth?.userId && supabase) {
+      try {
+        const { data: toneData } = await supabase
+          .from("operator_tones")
+          .select("tone_json")
+          .eq("operator_id", req.auth.userId)
+          .single();
+        
+        if (toneData && toneData.tone_json) {
+          operatorTone = toneData.tone_json;
+          console.log(`✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`);
+        }
+      } catch (error) {
+        // Tone profile is optional, continue without it
+        console.log(`ℹ️ [Tone] No tone profile found for ${req.auth.userId}`);
+      }
     }
 
     // Build RAG context if companyId provided
@@ -966,6 +1014,14 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
 - No generic statements
 
 **Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
+    }
+
+    // Enhance system prompt with operator tone profile if available
+    if (operatorTone) {
+      systemPrompt += `\n\n---\n\n## CRITICAL: Personal Writing Style\n\n`;
+      systemPrompt += `You must write in the operator's authentic voice. This is their actual writing style from Twitter:\n\n`;
+      systemPrompt += toneService.formatToneForPrompt(operatorTone);
+      systemPrompt += `\n**IMPORTANT:** Replicate this exact writing style while following the role guidelines above. The response should sound like THIS person wrote it.`;
     }
 
     // Enhance system prompt with RAG context if available
@@ -1555,6 +1611,277 @@ app.put("/company/:companyId/settings", async (req, res) => {
 });
 
 // ==========================================
+// OPERATOR TONE PROFILE ENDPOINTS
+// ==========================================
+
+// Import tone services
+const twitterService = require('./twitterService');
+const toneService = require('./toneService');
+
+/**
+ * Create operator tone profile from Twitter
+ * POST /operator/tone/create
+ * 
+ * Request: { operator_id: string, twitter_url: string }
+ * Response: { tone_profile: {...}, message: string }
+ */
+app.post("/operator/tone/create", async (req, res) => {
+  if (!supabase || !anthropic) {
+    return res.status(503).json({ 
+      error: "Tone profile features not available - Supabase or Anthropic not configured" 
+    });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { twitter_url } = req.body;
+  const operatorId = req.auth.userId;
+
+  if (!twitter_url) {
+    return res.status(400).json({ error: "twitter_url is required" });
+  }
+
+  try {
+    console.log(`🐦 [Tone Create] Creating tone profile for operator ${operatorId} from ${twitter_url}`);
+
+    // Extract username from URL
+    const username = twitterService.extractUsername(twitter_url);
+    console.log(`📝 Extracted username: @${username}`);
+
+    // Fetch tweets (using mock for now until Twitter.io API is configured)
+    // To use real API, replace fetchTweetsMock with fetchTweets
+    let tweets;
+    try {
+      // Try real API first if TWITTER_IO_API_KEY is set
+      if (process.env.TWITTER_IO_API_KEY) {
+        tweets = await twitterService.fetchTweets(username, 150);
+      } else {
+        console.log('⚠️ TWITTER_IO_API_KEY not set, using mock data');
+        tweets = await twitterService.fetchTweetsMock(username);
+      }
+    } catch (fetchError) {
+      console.warn(`⚠️ Twitter API failed, using mock data: ${fetchError.message}`);
+      tweets = await twitterService.fetchTweetsMock(username);
+    }
+
+    if (!tweets || tweets.length === 0) {
+      return res.status(400).json({ 
+        error: "No valid tweets found. User may have no posts or account is private." 
+      });
+    }
+
+    console.log(`✅ Retrieved ${tweets.length} tweets for analysis`);
+
+    // Generate tone profile using Claude
+    const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+
+    // Check if profile already exists
+    const { data: existingProfile } = await supabase
+      .from("operator_tones")
+      .select("id")
+      .eq("operator_id", operatorId)
+      .limit(1);
+
+    let result;
+    if (existingProfile && existingProfile.length > 0) {
+      // Update existing profile
+      const { data, error } = await supabase
+        .from("operator_tones")
+        .update({
+          twitter_url: twitter_url,
+          twitter_username: username,
+          tone_json: toneProfile,
+          last_learned_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("operator_id", operatorId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+      console.log(`✅ Updated existing tone profile for ${operatorId}`);
+    } else {
+      // Create new profile
+      const { data, error } = await supabase
+        .from("operator_tones")
+        .insert([{
+          operator_id: operatorId,
+          twitter_url: twitter_url,
+          twitter_username: username,
+          tone_json: toneProfile,
+          last_learned_at: new Date().toISOString(),
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+      console.log(`✅ Created new tone profile for ${operatorId}`);
+    }
+
+    res.status(200).json({
+      tone_profile: result.tone_json,
+      twitter_username: result.twitter_username,
+      last_learned_at: result.last_learned_at,
+      message: "Tone profile created successfully",
+    });
+  } catch (error) {
+    console.error("❌ [Tone Create] Error:", error);
+    res.status(500).json({ 
+      error: error.message || "Failed to create tone profile" 
+    });
+  }
+});
+
+/**
+ * Get operator tone profile
+ * GET /operator/tone/:operatorId
+ * 
+ * Response: { tone_profile: {...}, twitter_username: string, last_learned_at: timestamp }
+ */
+app.get("/operator/tone/:operatorId", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Supabase not configured" });
+  }
+
+  // Allow getting your own profile or any profile (for now)
+  // In production, you might want to restrict this
+  const { operatorId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from("operator_tones")
+      .select("*")
+      .eq("operator_id", operatorId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ 
+          error: "Tone profile not found for this operator" 
+        });
+      }
+      throw error;
+    }
+
+    res.status(200).json({
+      tone_profile: data.tone_json,
+      twitter_username: data.twitter_username,
+      twitter_url: data.twitter_url,
+      last_learned_at: data.last_learned_at,
+      created_at: data.created_at,
+    });
+  } catch (error) {
+    console.error("❌ [Tone Get] Error:", error);
+    res.status(500).json({ 
+      error: error.message || "Failed to get tone profile" 
+    });
+  }
+});
+
+/**
+ * Retrain operator tone profile (force immediate re-learning)
+ * POST /operator/tone/retrain
+ * 
+ * Request: { operator_id?: string } (if not provided, uses authenticated user)
+ * Response: { tone_profile: {...}, message: string }
+ */
+app.post("/operator/tone/retrain", async (req, res) => {
+  if (!supabase || !anthropic) {
+    return res.status(503).json({ 
+      error: "Tone profile features not available" 
+    });
+  }
+
+  if (!req.auth?.userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const operatorId = req.body.operator_id || req.auth.userId;
+
+  // Only allow retraining your own profile
+  if (operatorId !== req.auth.userId) {
+    return res.status(403).json({ 
+      error: "You can only retrain your own tone profile" 
+    });
+  }
+
+  try {
+    console.log(`🔄 [Tone Retrain] Retraining tone profile for ${operatorId}`);
+
+    // Get existing profile to retrieve Twitter URL
+    const { data: existingProfile, error: fetchError } = await supabase
+      .from("operator_tones")
+      .select("*")
+      .eq("operator_id", operatorId)
+      .single();
+
+    if (fetchError) {
+      return res.status(404).json({ 
+        error: "No existing tone profile found. Please create one first." 
+      });
+    }
+
+    const twitter_url = existingProfile.twitter_url;
+    const username = existingProfile.twitter_username || twitterService.extractUsername(twitter_url);
+
+    // Fetch fresh tweets
+    let tweets;
+    try {
+      if (process.env.TWITTER_IO_API_KEY) {
+        tweets = await twitterService.fetchTweets(username, 150);
+      } else {
+        console.log('⚠️ TWITTER_IO_API_KEY not set, using mock data');
+        tweets = await twitterService.fetchTweetsMock(username);
+      }
+    } catch (fetchError) {
+      console.warn(`⚠️ Twitter API failed, using mock data: ${fetchError.message}`);
+      tweets = await twitterService.fetchTweetsMock(username);
+    }
+
+    if (!tweets || tweets.length === 0) {
+      return res.status(400).json({ 
+        error: "No valid tweets found for retraining" 
+      });
+    }
+
+    // Generate new tone profile
+    const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+
+    // Update profile
+    const { data, error } = await supabase
+      .from("operator_tones")
+      .update({
+        tone_json: toneProfile,
+        last_learned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("operator_id", operatorId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`✅ Successfully retrained tone profile for ${operatorId}`);
+
+    res.status(200).json({
+      tone_profile: data.tone_json,
+      twitter_username: data.twitter_username,
+      last_learned_at: data.last_learned_at,
+      message: "Tone profile retrained successfully",
+    });
+  } catch (error) {
+    console.error("❌ [Tone Retrain] Error:", error);
+    res.status(500).json({ 
+      error: error.message || "Failed to retrain tone profile" 
+    });
+  }
+});
+
+// ==========================================
 // BACKGROUND PROCESSING FUNCTIONS
 // ==========================================
 
@@ -1717,6 +2044,107 @@ app.listen(PORT, () => {
   console.log("💡 The Chrome Extension will send requests here.");
   console.log("   Make sure the extension's API_ENDPOINT matches this URL.\n");
 });
+
+// ==========================================
+// AUTOMATIC TONE PROFILE RE-LEARNING
+// ==========================================
+
+const cron = require('node-cron');
+
+/**
+ * Automatic tone profile re-learning job
+ * Runs daily at 2 AM, checks for profiles that are 30+ days old
+ * and automatically re-learns them
+ */
+if (supabase && anthropic) {
+  // Schedule: Run every day at 2:00 AM
+  cron.schedule('0 2 * * *', async () => {
+    try {
+      console.log('\n🔄 [Cron] Starting automatic tone profile re-learning...');
+
+      // Find profiles that need re-learning (30+ days old)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const { data: staleProfiles, error } = await supabase
+        .from('operator_tones')
+        .select('*')
+        .lt('last_learned_at', thirtyDaysAgo.toISOString());
+
+      if (error) {
+        throw error;
+      }
+
+      if (!staleProfiles || staleProfiles.length === 0) {
+        console.log('✅ [Cron] No profiles need re-learning');
+        return;
+      }
+
+      console.log(`🔄 [Cron] Found ${staleProfiles.length} profiles to re-learn`);
+
+      // Process each profile
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const profile of staleProfiles) {
+        try {
+          console.log(`🔄 [Cron] Re-learning profile for operator ${profile.operator_id}...`);
+
+          const username = profile.twitter_username || twitterService.extractUsername(profile.twitter_url);
+
+          // Fetch fresh tweets
+          let tweets;
+          try {
+            if (process.env.TWITTER_IO_API_KEY) {
+              tweets = await twitterService.fetchTweets(username, 150);
+            } else {
+              tweets = await twitterService.fetchTweetsMock(username);
+            }
+          } catch (fetchError) {
+            console.warn(`⚠️ [Cron] Twitter API failed for @${username}, using mock data`);
+            tweets = await twitterService.fetchTweetsMock(username);
+          }
+
+          if (!tweets || tweets.length === 0) {
+            console.warn(`⚠️ [Cron] No tweets found for @${username}, skipping`);
+            failCount++;
+            continue;
+          }
+
+          // Generate new tone profile
+          const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+
+          // Update profile in database
+          await supabase
+            .from('operator_tones')
+            .update({
+              tone_json: toneProfile,
+              last_learned_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('operator_id', profile.operator_id);
+
+          console.log(`✅ [Cron] Successfully re-learned profile for ${profile.operator_id}`);
+          successCount++;
+
+          // Add a small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (profileError) {
+          console.error(`❌ [Cron] Failed to re-learn profile for ${profile.operator_id}:`, profileError.message);
+          failCount++;
+        }
+      }
+
+      console.log(`\n✅ [Cron] Tone re-learning complete: ${successCount} success, ${failCount} failed\n`);
+    } catch (error) {
+      console.error('❌ [Cron] Error in automatic tone re-learning:', error.message);
+    }
+  });
+
+  console.log('⏰ Automatic tone re-learning scheduler started (runs daily at 2 AM)');
+} else {
+  console.log('⚠️ Automatic tone re-learning disabled (Supabase or Anthropic not configured)');
+}
 
 /**
  * Graceful shutdown
