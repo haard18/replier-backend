@@ -285,7 +285,25 @@ async function fetchTweetReplies(tweetId, maxReplies = 10) {
         throw new Error(rawData.message || 'Twitter API returned an error while fetching replies');
       }
 
-      const payload = rawData.replies ? rawData : rawData.data || {};
+      // Normalize response shape:
+      // - Ideal: { replies: [...] }
+      // - Sometimes: { data: { replies: [...] } }
+      // - Fallback seen in prod: { tweets: [...] }
+      let payload = {};
+      if (Array.isArray(rawData.replies)) {
+        payload = rawData;
+      } else if (rawData.data && Array.isArray(rawData.data.replies)) {
+        payload = rawData.data;
+      } else if (Array.isArray(rawData.tweets)) {
+        payload = {
+          replies: rawData.tweets,
+          has_next_page: rawData.has_next_page ?? rawData.data?.has_next_page ?? false,
+          next_cursor: rawData.next_cursor ?? rawData.data?.next_cursor ?? '',
+        };
+      } else {
+        payload = rawData.data || rawData;
+      }
+
       const replies = payload.replies;
       if (!Array.isArray(replies)) {
         console.warn('⚠️ Unexpected replies structure from Twitter API:', JSON.stringify(rawData).substring(0, 200));
