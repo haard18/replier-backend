@@ -1,13 +1,13 @@
 /**
  * AI Reply Generator Backend Server
  * Express.js server that integrates with OpenAI API
- * 
+ *
  * Installation:
  * 1. cd backend
  * 2. npm install
  * 3. Create a .env file with: OPENAI_API_KEY=your_key_here
  * 4. npm start
- * 
+ *
  * The server will run on http://localhost:3000
  */
 
@@ -49,7 +49,9 @@ try {
 // Verify API key BEFORE initializing anything
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("❌ ERROR: ANTHROPIC_API_KEY is not set in .env file");
-  console.error("Please create a .env file with: ANTHROPIC_API_KEY=your_key_here");
+  console.error(
+    "Please create a .env file with: ANTHROPIC_API_KEY=your_key_here"
+  );
   process.exit(1);
 }
 
@@ -110,16 +112,20 @@ app.use(express.json());
 
 /**
  * Clerk Token Validation Middleware
- * 
+ *
  * Validates the Clerk session token from the Authorization header.
  * The Chrome extension and web app send tokens in the format:
  * Authorization: Bearer <clerk_token>
- * 
+ *
  * This middleware validates the token and attaches user info to req.auth
  */
 async function validateClerkToken(req, res, next) {
   // Skip validation for health check and public endpoints
-  if (req.path === "/health" || req.path === "/" || req.path === "/favicon.ico") {
+  if (
+    req.path === "/health" ||
+    req.path === "/" ||
+    req.path === "/favicon.ico"
+  ) {
     return next();
   }
 
@@ -206,7 +212,7 @@ async function trackUsageInSupabase(userId, tone = "value") {
     if (!userData || userData.length === 0) {
       // Get today's date in YYYY-MM-DD format for Postgres
       const today = new Date().toISOString().split("T")[0];
-      
+
       const { data: newUser, error: createError } = await supabase
         .from("operator_usage")
         .insert([
@@ -217,29 +223,30 @@ async function trackUsageInSupabase(userId, tone = "value") {
             replies_sent_today: 1,
             replies_sent_week: 1,
             last_reset_date: today,
-            last_reset_week_date: today
+            last_reset_week_date: today,
           },
         ])
         .select()
         .limit(1);
 
       if (createError) throw createError;
-      if (!newUser || newUser.length === 0) throw new Error("Failed to create user record");
+      if (!newUser || newUser.length === 0)
+        throw new Error("Failed to create user record");
       userData = newUser[0];
       console.log(`📊 Created new user usage record for ${userId}`);
     } else {
       // Get the existing user record (first element from array)
       const user = userData[0];
-      
+
       // Get today's date in YYYY-MM-DD format
       const today = new Date().toISOString().split("T")[0];
-      
+
       // Build update object with simple increments
       // The database trigger will handle resets automatically
       const updateData = {
         replies_sent_today: user.replies_sent_today + 1,
         replies_sent_week: user.replies_sent_week + 1,
-        last_reset_date: today
+        last_reset_date: today,
       };
 
       // Update the record - any resets will be handled by the database trigger
@@ -251,7 +258,8 @@ async function trackUsageInSupabase(userId, tone = "value") {
         .limit(1);
 
       if (updateError) throw updateError;
-      if (!updatedUser || updatedUser.length === 0) throw new Error("Failed to update user record");
+      if (!updatedUser || updatedUser.length === 0)
+        throw new Error("Failed to update user record");
       userData = updatedUser[0];
     }
 
@@ -263,13 +271,22 @@ async function trackUsageInSupabase(userId, tone = "value") {
       usage_count: userData.replies_sent_today,
       daily_used: userData.replies_sent_today,
       daily_goal: userData.daily_goal,
-      daily_remaining: Math.max(0, userData.daily_goal - userData.replies_sent_today),
+      daily_remaining: Math.max(
+        0,
+        userData.daily_goal - userData.replies_sent_today
+      ),
       weekly_used: userData.replies_sent_week,
       weekly_goal: userData.weekly_goal,
-      weekly_remaining: Math.max(0, userData.weekly_goal - userData.replies_sent_week),
+      weekly_remaining: Math.max(
+        0,
+        userData.weekly_goal - userData.replies_sent_week
+      ),
     };
   } catch (error) {
-    console.warn(`⚠️ Supabase tracking error for user ${userId}:`, error.message);
+    console.warn(
+      `⚠️ Supabase tracking error for user ${userId}:`,
+      error.message
+    );
     return null;
   }
 }
@@ -299,46 +316,53 @@ async function getUserUsage(userId) {
     // If no record exists, create one with default values
     if (!userData || userData.length === 0) {
       const today = new Date().toISOString().split("T")[0];
-      
+
       const { data: newUser, error: createError } = await supabase
         .from("operator_usage")
-        .insert([{
-          user_id: userId,
-          daily_goal: 10,
-          weekly_goal: 50,
-          replies_sent_today: 0,
-          replies_sent_week: 0,
-          last_reset_date: today,
-          last_reset_week_date: today
-        }])
+        .insert([
+          {
+            user_id: userId,
+            daily_goal: 10,
+            weekly_goal: 50,
+            replies_sent_today: 0,
+            replies_sent_week: 0,
+            last_reset_date: today,
+            last_reset_week_date: today,
+          },
+        ])
         .select()
         .limit(1);
 
       if (createError) {
         // If duplicate key error, it means another request created the record
         // Try fetching again
-        if (createError.code === '23505') {
+        if (createError.code === "23505") {
           const { data: retryData, error: retryError } = await supabase
             .from("operator_usage")
             .select()
             .eq("user_id", userId)
             .limit(1);
-          
+
           if (retryError || !retryData || retryData.length === 0) {
-            console.warn(`⚠️ Error fetching usage after duplicate key for ${userId}`);
+            console.warn(
+              `⚠️ Error fetching usage after duplicate key for ${userId}`
+            );
             return null;
           }
-          
+
           userData = retryData;
         } else {
-          console.warn(`⚠️ Error creating usage for ${userId}:`, createError.message);
+          console.warn(
+            `⚠️ Error creating usage for ${userId}:`,
+            createError.message
+          );
           return null;
         }
       } else {
         userData = newUser;
       }
     }
-    console.log(userData)
+    console.log(userData);
     const user = userData[0];
 
     return {
@@ -348,7 +372,7 @@ async function getUserUsage(userId) {
       daily_remaining: Math.max(0, user.daily_goal - user.replies_sent_today),
       weekly_used: user.replies_sent_week,
       weekly_goal: user.weekly_goal,
-      weekly_remaining: Math.max(0, user.weekly_goal - user.replies_sent_week)
+      weekly_remaining: Math.max(0, user.weekly_goal - user.replies_sent_week),
     };
   } catch (error) {
     console.warn(`⚠️ Error getting usage for ${userId}:`, error.message);
@@ -367,20 +391,32 @@ app.get("/health", (req, res) => {
 /**
  * Generate reply endpoint for LinkedIn
  * POST /generate/linkedin
- * 
+ *
  * Request body: { text: "original post text", tone: "funny" | "value", emojiBool: boolean }
  * Response: JSON with reply text and usage stats
- * 
+ *
  * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/linkedin", async (req, res) => {
   try {
-    const { text, tone = "value", emojiBool, web3Bool = true, companyId } = req.body;
+    const {
+      text,
+      tone = "value",
+      emojiBool,
+      web3Bool = true,
+      companyId,
+    } = req.body;
 
     // Validate input
-    if (!text || typeof text !== "string" || text.trim().length === 0 || emojiBool === undefined) {
+    if (
+      !text ||
+      typeof text !== "string" ||
+      text.trim().length === 0 ||
+      emojiBool === undefined
+    ) {
       return res.status(400).json({
-        error: "Invalid input. Please provide a 'text' field with post content.",
+        error:
+          "Invalid input. Please provide a 'text' field with post content.",
       });
     }
 
@@ -391,7 +427,12 @@ app.post("/generate/linkedin", async (req, res) => {
       });
     }
 
-    console.log(`📝 [LinkedIn] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool})`);
+    console.log(
+      `📝 [LinkedIn] Generating reply for: "${text.substring(
+        0,
+        50
+      )}..." (tone: ${tone}, web3: ${web3Bool})`
+    );
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -410,10 +451,12 @@ app.post("/generate/linkedin", async (req, res) => {
           .select("tone_json")
           .eq("operator_id", req.auth.userId)
           .single();
-        
+
         if (toneData && toneData.tone_json) {
           operatorTone = toneData.tone_json;
-          console.log(`✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`);
+          console.log(
+            `✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`
+          );
         }
       } catch (error) {
         // Tone profile is optional, continue without it
@@ -434,14 +477,23 @@ app.post("/generate/linkedin", async (req, res) => {
           maxChunks: 10,
           similarityThreshold: 0.7,
         });
-        console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
+        console.log(
+          `✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`
+        );
       } catch (error) {
-        console.warn(`⚠️ [RAG] Error building context for company ${companyId}:`, error.message);
-        console.warn(`💡 Hint: Visit the Knowledge page first to create a company and upload documents.`);
+        console.warn(
+          `⚠️ [RAG] Error building context for company ${companyId}:`,
+          error.message
+        );
+        console.warn(
+          `💡 Hint: Visit the Knowledge page first to create a company and upload documents.`
+        );
         // Continue without RAG context
       }
     } else if (companyId && (!supabase || !openai)) {
-      console.warn(`⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`);
+      console.warn(
+        `⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`
+      );
     }
 
     // Build system prompt based on tone and web3 setting
@@ -654,15 +706,15 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
     // Enhance system prompt with RAG context if available
     if (ragContext && ragContext.hasContext) {
       systemPrompt += `\n\n---\n\n## IMPORTANT: Company-Specific Context\n\n`;
-      
+
       if (ragContext.formattedVoice) {
         systemPrompt += `### Company Voice & Brand Guidelines:\n${ragContext.formattedVoice}\n\n`;
       }
-      
+
       if (ragContext.formattedChunks) {
         systemPrompt += `### Relevant Company Knowledge:\nUse the following information from the company's knowledge base to inform your reply. Only reference this if relevant to the post.\n\n${ragContext.formattedChunks}\n\n`;
       }
-      
+
       systemPrompt += `**CRITICAL:** Align your reply with the company's voice and use relevant knowledge naturally. Do NOT hallucinate facts outside the provided context.`;
     }
 
@@ -674,7 +726,9 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
       messages: [
         {
           role: "user",
-          content: `Generate a ${web3Bool ? 'Web3 ' : ''}professional comment for this LinkedIn post or comment:
+          content: `Generate a ${
+            web3Bool ? "Web3 " : ""
+          }professional comment for this LinkedIn post or comment:
 
 "${text}"
 
@@ -691,13 +745,18 @@ Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
     }
 
     // Extract the reply text
-    const reply = message.content[0].type === "text" ? message.content[0].text : "";
+    const reply =
+      message.content[0].type === "text" ? message.content[0].text : "";
 
     if (!reply) {
-      return res.status(500).json({ error: "Failed to generate reply - empty response" });
+      return res
+        .status(500)
+        .json({ error: "Failed to generate reply - empty response" });
     }
 
-    console.log(`✅ [LinkedIn] Reply generated: "${reply.substring(0, 50)}..."`);
+    console.log(
+      `✅ [LinkedIn] Reply generated: "${reply.substring(0, 50)}..."`
+    );
 
     // Track usage if user is authenticated
     let usageStats = null;
@@ -717,19 +776,30 @@ Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
     console.error("Full error:", error);
 
     // Handle specific Anthropic errors
-    if (error.status === 401 || error.message?.includes("401") || error.message?.includes("Unauthorized")) {
+    if (
+      error.status === 401 ||
+      error.message?.includes("401") ||
+      error.message?.includes("Unauthorized")
+    ) {
       return res.status(401).json({
         error: "Invalid Anthropic API key. Check your .env file.",
       });
     }
 
-    if (error.status === 429 || error.message?.includes("429") || error.message?.includes("rate_limit")) {
+    if (
+      error.status === 429 ||
+      error.message?.includes("429") ||
+      error.message?.includes("rate_limit")
+    ) {
       return res.status(429).json({
         error: "Rate limited by Anthropic. Please try again in a moment.",
       });
     }
 
-    if (error.message?.includes("API key") || error.message?.includes("authentication")) {
+    if (
+      error.message?.includes("API key") ||
+      error.message?.includes("authentication")
+    ) {
       return res.status(401).json({
         error: "Anthropic API key issue: " + error.message,
       });
@@ -744,20 +814,33 @@ Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
 /**
  * Generate reply endpoint for Twitter/X
  * POST /generate/twitter
- * 
+ *
  * Request body: { text: "original post text", tone: "funny" | "value" }
  * Response: JSON with reply text and usage stats
- * 
+ *
  * Authorization: Bearer <clerk_token> (optional, but required for usage tracking)
  */
 app.post("/generate/twitter", async (req, res) => {
   try {
-    const { text, tone, emojiBool, web3Bool = true, companyId, tweetId } = req.body;
+    const {
+      text,
+      tone,
+      emojiBool,
+      web3Bool = true,
+      companyId,
+      tweetId,
+    } = req.body;
 
     // Validate input
-    if (!text || typeof text !== "string" || text.trim().length === 0 || emojiBool === undefined) {
+    if (
+      !text ||
+      typeof text !== "string" ||
+      text.trim().length === 0 ||
+      emojiBool === undefined
+    ) {
       return res.status(400).json({
-        error: "Invalid input. Please provide a 'text' field with post content.",
+        error:
+          "Invalid input. Please provide a 'text' field with post content.",
       });
     }
 
@@ -774,7 +857,14 @@ app.post("/generate/twitter", async (req, res) => {
       });
     }
 
-    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool}) with companyId: ${companyId} tweetId: ${tweetId || "N/A"}`);
+    console.log(
+      `📝 [Twitter] Generating reply for: "${text.substring(
+        0,
+        50
+      )}..." (tone: ${tone}, web3: ${web3Bool}) with companyId: ${companyId} tweetId: ${
+        tweetId || "N/A"
+      }`
+    );
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -793,10 +883,12 @@ app.post("/generate/twitter", async (req, res) => {
           .select("tone_json")
           .eq("operator_id", req.auth.userId)
           .single();
-        
+
         if (toneData && toneData.tone_json) {
           operatorTone = toneData.tone_json;
-          console.log(`✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`);
+          console.log(
+            `✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`
+          );
         }
       } catch (error) {
         // Tone profile is optional, continue without it
@@ -806,7 +898,7 @@ app.post("/generate/twitter", async (req, res) => {
 
     // Build RAG context if companyId provided
     let ragContext = null;
-    if (companyId ) {
+    if (companyId) {
       try {
         console.log(`🧠 [RAG] Building context for company ${companyId}`);
         ragContext = await vectorOperations.buildRagContext({
@@ -817,14 +909,23 @@ app.post("/generate/twitter", async (req, res) => {
           maxChunks: 8, // Slightly fewer for Twitter's shorter format
           similarityThreshold: 0.7,
         });
-        console.log(`✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`);
+        console.log(
+          `✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`
+        );
       } catch (error) {
-        console.warn(`⚠️ [RAG] Error building context for company ${companyId}:`, error.message);
-        console.warn(`💡 Hint: Visit the Knowledge page first to create a company and upload documents.`);
+        console.warn(
+          `⚠️ [RAG] Error building context for company ${companyId}:`,
+          error.message
+        );
+        console.warn(
+          `💡 Hint: Visit the Knowledge page first to create a company and upload documents.`
+        );
         // Continue without RAG context
       }
     } else if (companyId && (!supabase || !openai)) {
-      console.warn(`⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`);
+      console.warn(
+        `⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`
+      );
     }
 
     // Fetch existing replies for additional context
@@ -832,9 +933,14 @@ app.post("/generate/twitter", async (req, res) => {
     if (tweetId) {
       try {
         tweetReplies = await twitterService.fetchTweetReplies(tweetId, 10);
-        console.log(`💬 [Twitter] Loaded ${tweetReplies.length} replies for tweet ${tweetId}`);
+        console.log(
+          `💬 [Twitter] Loaded ${tweetReplies.length} replies for tweet ${tweetId}`
+        );
       } catch (replyError) {
-        console.warn(`⚠️ [Twitter] Could not load replies for tweet ${tweetId}:`, replyError.message);
+        console.warn(
+          `⚠️ [Twitter] Could not load replies for tweet ${tweetId}:`,
+          replyError.message
+        );
       }
     }
 
@@ -851,204 +957,193 @@ app.post("/generate/twitter", async (req, res) => {
                   : "";
               return `${index + 1}. ${author}${metrics}: ${reply.text}`;
             })
-            .join("\n")}\n\nUse these to understand the conversation flow. Do NOT repeat them verbatim.`
+            .join(
+              "\n"
+            )}\n\nUse these to understand the conversation flow. Do NOT repeat them verbatim.`
         : "";
 
     // Build system prompt based on tone and web3 setting
     let systemPrompt;
-    if (tone === "funny" && web3Bool) {
-      systemPrompt = `## Role: Sharp Web3 Voice for Twitter
+    // Replace the systemPrompt section with these improved versions:
 
-You are a Web3 personality known for witty, intelligent takes. Your replies are funny AND smart.
+    // FUNNY + WEB3
+    if (tone === "funny" && web3Bool) {
+      systemPrompt = `## Role: Conversational Web3 Voice
+
+You're having a natural Twitter conversation. Be witty, make a sharp observation, then ask something that invites dialogue.
 
 ### Core Principles
 
-**Understand Context:**
-- Read the tweet carefully - understand what they're ACTUALLY saying
-- If it's a reply to another tweet, respond to THAT person's point
-- If it's engagement farming or ragebait, call it out cleverly
+**Read the Context:**
+- What's the actual point they're making?
+- If it's a reply thread, respond to their specific argument
+- Understand the vibe - are they serious, joking, or engagement farming?
 
-**Reply Quality:**
-1. Be specific to THIS tweet, not generic crypto commentary
-2. Add genuine humor or sharp observation
-3. Sound natural, not like you're trying to go viral
-4. Maximum 1-2 sentences
+**Conversational Structure:**
+1. React naturally to what they said (witty observation or light joke)
+2. End with a genuine question that continues the conversation
+3. Sound like a friend jumping into the thread
 
-**Tone & Style:**
-* Witty but authentic - clever without being cringe
-* 1-2 sentences ONLY
-* ${emojiBool ? "Maximum 2 emojis at the end only" : "NO emojis allowed"}
-* Never spam emojis in the middle of text
-* No forced slang or outdated memes
-* Sound like a smart person being funny, not a comedian trying to sound smart
+**Style:**
+* Natural, flowing sentences - like you're texting a friend
+* 2-3 short sentences max
+* ${emojiBool ? "1-2 emojis only, at the end" : "NO emojis"}
+* End with a question that shows curiosity
+* No forced memes or crypto jargon spam
 
-**Examples of Good Replies:**
+**Examples:**
 
 Tweet: "Just paid $50 in gas fees to move $30"
-Bad: "ngmi bro 😂💀🔥 this is why we need L2s!!!"
-Good: "Congratulations on your $80 donation to validators 🫡"
+Reply: "That's a very expensive lesson in timing. What were you even trying to move?"
 
-Tweet: "Web3 gaming will replace AAA games"
-Bad: "lmaooo no way 💀💀💀"
-Good: "Brother we still can't match PS2 graphics"
+Tweet: "Web3 gaming will replace AAA games soon"
+Reply: "We can barely load a 2D metaverse without lag. What game are you playing that makes you think we're ready?"
 
 Reply to: "ETH is dead, everyone's moving to Solana"
-Bad: "Cope harder 😂😂😂"
-Good: "Solana's had 7 outages this year but sure"
+Reply: "Interesting take after the 7th outage this year. What makes you think it's more reliable long-term?"
 
 **Critical Rules:**
-- Max 2 emojis, ONLY at the very end
-- Be clever, not mean
-- Specific to THIS tweet
-- Sound like a real person
-- If replying to a reply, address what THEY said
+- React first, then question
+- Questions should be genuine, not rhetorical dunks
+- Sound curious, not confrontational
+- Keep it conversational and flowing
 
-**Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
-    } else if (tone === "funny" && !web3Bool) {
-      systemPrompt = `## Role: Sharp Professional Voice for Twitter
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+    }
 
-You are a professional known for witty, intelligent takes. Your replies are funny AND smart.
+    // FUNNY + NON-WEB3
+    else if (tone === "funny" && !web3Bool) {
+      systemPrompt = `## Role: Conversational Professional Voice
+
+You're having a natural Twitter conversation. Be witty, make a sharp observation, then ask something that invites dialogue.
 
 ### Core Principles
 
-**Understand Context:**
-- Read the tweet carefully - understand what they're ACTUALLY saying
-- If it's a reply to another tweet, respond to THAT person's point
-- If it's engagement farming or ragebait, call it out cleverly
+**Read the Context:**
+- What's the actual point they're making?
+- If it's a reply thread, respond to their specific argument
+- Understand the vibe - are they serious, joking, or engagement farming?
 
-**Reply Quality:**
-1. Be specific to THIS tweet, not generic commentary
-2. Add genuine humor or sharp observation
-3. Sound natural, not like you're trying to go viral
-4. Maximum 1-2 sentences
+**Conversational Structure:**
+1. React naturally to what they said (witty observation or light joke)
+2. End with a genuine question that continues the conversation
+3. Sound like a friend jumping into the thread
 
-**Tone & Style:**
-* Witty but authentic - clever without being cringe
-* 1-2 sentences ONLY
-* ${emojiBool ? "Maximum 2 emojis at the end only" : "NO emojis allowed"}
-* Never spam emojis in the middle of text
-* No forced slang or outdated memes
-* Sound like a smart person being funny, not a comedian trying to sound smart
+**Style:**
+* Natural, flowing sentences - like you're texting a friend
+* 2-3 short sentences max
+* ${emojiBool ? "1-2 emojis only, at the end" : "NO emojis"}
+* End with a question that shows curiosity
+* No forced jokes or corporate speak
 
-**Examples of Good Replies:**
+**Examples:**
 
 Tweet: "Just spent 3 hours in a meeting that could have been an email"
-Bad: "ngmi bro 😂💀🔥 meetings are the worst!!!"
-Good: "Congratulations on your 3-hour email with catering 🫡"
+Reply: "At least they probably had snacks. Did anyone actually take action items or just nod along?"
 
 Tweet: "AI will replace all creative jobs"
-Bad: "lmaooo no way 💀💀💀"
-Good: "AI can't even draw hands correctly but sure"
+Reply: "It still draws hands like eldritch horrors. Which creative job do you think goes first?"
 
 Reply to: "Coffee is overrated"
-Bad: "Cope harder 😂😂😂"
-Good: "Found the tea drinker"
+Reply: "Bold stance from presumably a tea person. What's your drink of choice that's so much better?"
 
 **Critical Rules:**
-- Max 2 emojis, ONLY at the very end
-- Be clever, not mean
-- Specific to THIS tweet
-- Sound like a real person
-- If replying to a reply, address what THEY said
+- React first, then question
+- Questions should be genuine, not rhetorical dunks
+- Sound curious, not confrontational
+- Keep it conversational and flowing
 
-**Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
-    } else if (tone === "value" && web3Bool) {
-      systemPrompt = `## Role: Insightful Web3 Voice for Twitter
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+    }
 
-You are a Web3 professional known for valuable, intelligent takes. Your replies add real insight.
+    // VALUE + WEB3
+    else if (tone === "value" && web3Bool) {
+      systemPrompt = `## Role: Thoughtful Web3 Voice
+
+You're adding substance to a Twitter conversation. Share insight or data, then ask something that deepens the discussion.
 
 ### Core Principles
 
-**Understand Context:**
-- Read the tweet carefully - what's the actual point being made?
-- If it's a reply to another tweet, respond to THAT person's argument
-- Add substance, not just agreement or disagreement
+**Read the Context:**
+- What's the core argument or claim?
+- If it's a reply thread, engage with their specific point
+- Add information they might not have considered
 
-**Reply Quality:**
-1. Be specific to THIS tweet
-2. Add data, context, or technical insight
-3. Challenge assumptions constructively
-4. Maximum 1-2 sentences
+**Conversational Structure:**
+1. Make your point with substance (data, context, or technical insight)
+2. End with a question that explores the topic further
+3. Sound like a peer sharing knowledge, not lecturing
 
-**Tone & Style:**
-* Professional but casual - peer-to-peer
-* 1-2 sentences ONLY
-* Maximum 1 emoji, ONLY at the very end if needed
-* Never spam emojis or use them mid-sentence
-* Skip buzzwords and hype
-* Sound like an expert sharing knowledge, not preaching
+**Style:**
+* Clear, direct sentences
+* 2-3 sentences max
+* Maximum 1 emoji at the end if it fits
+* End with a genuine question that invites deeper thinking
+* Skip hype words and buzzwords
 
-**Examples of Good Replies:**
+**Examples:**
 
 Tweet: "ETH is too expensive for normal users"
-Bad: "L2s are the solution! 🚀💪"
-Good: "Base and Arbitrum transactions are under $0.10. L1 is now settlement layer, not user layer."
+Reply: "L2s like Base and Arbitrum are under $0.10 per transaction now. Are you using them or still defaulting to mainnet?"
 
 Tweet: "NFTs are just JPEGs with no value"
-Bad: "Wrong! NFTs are the future of digital ownership 🔥"
-Good: "Tickets, credentials, and in-game items are working use cases. Profile pictures were just the consumer wedge."
+Reply: "Event tickets and game items are proving utility beyond profile pics. What use case would actually convince you there's value here?"
 
 Reply to: "DeFi has no real users"
-Bad: "Not true! Check the TVL 📊"
-Good: "Aave processes $2B monthly in real loans. Issue is 90% of volume is yield farming, not organic use."
+Reply: "Aave processes $2B monthly in actual loans. The issue is 90% is yield farming, not organic borrowing. What would real adoption look like to you?"
 
 **Critical Rules:**
-- Max 1 emoji at the very end only
-- Be substantive - add information or perspective
-- Specific to THIS tweet
-- If replying to a reply, address their exact point
-- No generic statements
+- Lead with substance, end with curiosity
+- Questions should advance the conversation
+- Show you're interested in their perspective
+- Be informative but conversational
 
-**Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
-    } else {
-      // tone === "value" && !web3Bool
-      systemPrompt = `## Role: Insightful Professional Voice for Twitter
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+    }
 
-You are a professional known for valuable, intelligent takes. Your replies add real insight.
+    // VALUE + NON-WEB3
+    else {
+      systemPrompt = `## Role: Thoughtful Professional Voice
+
+You're adding substance to a Twitter conversation. Share insight or data, then ask something that deepens the discussion.
 
 ### Core Principles
 
-**Understand Context:**
-- Read the tweet carefully - what's the actual point being made?
-- If it's a reply to another tweet, respond to THAT person's argument
-- Add substance, not just agreement or disagreement
+**Read the Context:**
+- What's the core argument or claim?
+- If it's a reply thread, engage with their specific point
+- Add information they might not have considered
 
-**Reply Quality:**
-1. Be specific to THIS tweet
-2. Add data, context, or insight
-3. Challenge assumptions constructively
-4. Maximum 1-2 sentences
+**Conversational Structure:**
+1. Make your point with substance (data, context, or insight)
+2. End with a question that explores the topic further
+3. Sound like a peer sharing knowledge, not lecturing
 
-**Tone & Style:**
-* Professional but casual - peer-to-peer
-* 1-2 sentences ONLY
-* Maximum 1 emoji, ONLY at the very end if needed
-* Never spam emojis or use them mid-sentence
-* Skip buzzwords and hype
-* Sound like an expert sharing knowledge, not preaching
+**Style:**
+* Clear, direct sentences
+* 2-3 sentences max
+* Maximum 1 emoji at the end if it fits
+* End with a genuine question that invites deeper thinking
+* Skip buzzwords and corporate jargon
 
-**Examples of Good Replies:**
+**Examples:**
 
 Tweet: "Remote work kills company culture"
-Bad: "Not true! Remote work is great 🚀💪"
-Good: "GitLab scaled to 2000+ employees fully remote. Culture is intentional, not proximity."
+Reply: "GitLab scaled to 2000+ employees fully remote with strong culture. What specific cultural elements do you think require physical proximity?"
 
 Tweet: "Marketing is just manipulation"
-Bad: "Wrong! Marketing is about value 🔥"
-Good: "Marketing is distribution. Bad products manipulate, good products educate."
+Reply: "Marketing is distribution - bad products manipulate, good products educate. What's an example of marketing you think was actually valuable?"
 
 Reply to: "Degrees are worthless now"
-Bad: "Not true! Check the data 📊"
-Good: "College grads still earn 67% more lifetime. ROI varies wildly by major and school though."
+Reply: "College grads still earn 67% more lifetime, though ROI varies wildly by major. What alternative path do you think provides better outcomes?"
 
 **Critical Rules:**
-- Max 1 emoji at the very end only
-- Be substantive - add information or perspective
-- Specific to THIS tweet
-- If replying to a reply, address their exact point
-- No generic statements
+- Lead with substance, end with curiosity
+- Questions should advance the conversation
+- Show you're interested in their perspective
+- Be informative but conversational
 
-**Output:** Only the tweet reply. No quotes, no labels, no explanations.`;
+**Output:** Only the reply. No quotes, labels, or explanations.`;
     }
 
     // Enhance system prompt with operator tone profile if available
@@ -1062,15 +1157,15 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
     // Enhance system prompt with RAG context if available
     if (ragContext && ragContext.hasContext) {
       systemPrompt += `\n\n---\n\n## IMPORTANT: Company-Specific Context\n\n`;
-      
+
       if (ragContext.formattedVoice) {
         systemPrompt += `### Company Voice & Brand Guidelines:\n${ragContext.formattedVoice}\n\n`;
       }
-      
+
       if (ragContext.formattedChunks) {
         systemPrompt += `### Relevant Company Knowledge:\nUse the following information from the company's knowledge base to inform your reply. Only reference this if relevant to the tweet.\n\n${ragContext.formattedChunks}\n\n`;
       }
-      
+
       systemPrompt += `**CRITICAL:** Align your reply with the company's voice and use relevant knowledge naturally. Do NOT hallucinate facts outside the provided context.`;
     }
 
@@ -1082,7 +1177,9 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
       messages: [
         {
           role: "user",
-          content: `Generate a ${web3Bool ? 'Web3 ' : ''}comment for this Twitter post or reply:
+          content: `Generate a ${
+            web3Bool ? "Web3 " : ""
+          }comment for this Twitter post or reply:
 
 "${text}"
 
@@ -1101,10 +1198,13 @@ Remember: Keep it short (1-2 sentences), maximum 2 emojis at the END only. Only 
     }
 
     // Extract the reply text
-    const reply = message.content[0].type === "text" ? message.content[0].text : "";
+    const reply =
+      message.content[0].type === "text" ? message.content[0].text : "";
 
     if (!reply) {
-      return res.status(500).json({ error: "Failed to generate reply - empty response" });
+      return res
+        .status(500)
+        .json({ error: "Failed to generate reply - empty response" });
     }
 
     console.log(`✅ [Twitter] Reply generated: "${reply.substring(0, 50)}..."`);
@@ -1127,19 +1227,30 @@ Remember: Keep it short (1-2 sentences), maximum 2 emojis at the END only. Only 
     console.error("Full error:", error);
 
     // Handle specific Anthropic errors
-    if (error.status === 401 || error.message?.includes("401") || error.message?.includes("Unauthorized")) {
+    if (
+      error.status === 401 ||
+      error.message?.includes("401") ||
+      error.message?.includes("Unauthorized")
+    ) {
       return res.status(401).json({
         error: "Invalid Anthropic API key. Check your .env file.",
       });
     }
 
-    if (error.status === 429 || error.message?.includes("429") || error.message?.includes("rate_limit")) {
+    if (
+      error.status === 429 ||
+      error.message?.includes("429") ||
+      error.message?.includes("rate_limit")
+    ) {
       return res.status(429).json({
         error: "Rate limited by Anthropic. Please try again in a moment.",
       });
     }
 
-    if (error.message?.includes("API key") || error.message?.includes("authentication")) {
+    if (
+      error.message?.includes("API key") ||
+      error.message?.includes("authentication")
+    ) {
       return res.status(401).json({
         error: "Anthropic API key issue: " + error.message,
       });
@@ -1154,7 +1265,7 @@ Remember: Keep it short (1-2 sentences), maximum 2 emojis at the END only. Only 
 /**
  * Get user usage endpoint
  * GET /usage
- * 
+ *
  * Returns current usage stats for the authenticated user
  * Authorization: Bearer <clerk_token> (required)
  */
@@ -1196,10 +1307,13 @@ app.get("/usage", async (req, res) => {
  */
 app.post("/generate", async (req, res) => {
   const referer = req.get("referer") || "";
-  const platform = referer.includes("x.com") || referer.includes("twitter.com") ? "twitter" : "linkedin";
-  
+  const platform =
+    referer.includes("x.com") || referer.includes("twitter.com")
+      ? "twitter"
+      : "linkedin";
+
   console.log(`📝 [Generate] Routing to ${platform} endpoint`);
-  
+
   // Forward to appropriate endpoint by calling the route handlers
   if (platform === "twitter") {
     // Call Twitter handler
@@ -1210,13 +1324,13 @@ app.post("/generate", async (req, res) => {
     const { text, tone } = req.body;
     req.body = { text, tone: tone || "value" };
   }
-  
+
   // Use next() to proceed to the appropriate handler
   // by modifying the request path
   const originalPath = req.path;
   req.path = `/generate/${platform}`;
   req.url = `/generate/${platform}`;
-  
+
   // Call the appropriate handler
   app._router.handle(req, res);
 });
@@ -1228,7 +1342,7 @@ app.post("/generate", async (req, res) => {
 /**
  * Create or get company for a user
  * POST /company/ensure
- * 
+ *
  * Request: { user_id: string, name?: string }
  * Response: { company_id: string }
  */
@@ -1282,15 +1396,13 @@ app.post("/company/ensure", async (req, res) => {
     }
 
     // Add user as owner in memberships
-    await supabase
-      .from("user_company_memberships")
-      .insert([
-        {
-          user_id: userId,
-          company_id: newCompany.id,
-          role: "owner",
-        },
-      ]);
+    await supabase.from("user_company_memberships").insert([
+      {
+        user_id: userId,
+        company_id: newCompany.id,
+        role: "owner",
+      },
+    ]);
 
     console.log(`✅ Created company ${newCompany.id} for user ${userId}`);
 
@@ -1300,87 +1412,100 @@ app.post("/company/ensure", async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [Ensure Company] Error:", error);
-    res.status(500).json({ error: error.message || "Failed to ensure company" });
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to ensure company" });
   }
 });
 
 /**
  * Upload document to company knowledge base
  * POST /company/:companyId/upload
- * 
+ *
  * Request: multipart/form-data with 'file' field
  * Response: { document_id, chunks_created, status }
  */
-app.post("/company/:companyId/upload", upload.single("file"), async (req, res) => {
-  if (!supabase || !openai) {
-    return res.status(503).json({
-      error: "RAG features not available - Supabase or OpenAI not configured",
-    });
-  }
-
-  if (!req.auth?.userId) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const { companyId } = req.params;
-  const file = req.file;
-
-  if (!file) {
-    return res.status(400).json({ error: "No file uploaded" });
-  }
-
-  try {
-    console.log(`📤 [Upload] Processing file: ${file.originalname} for company ${companyId}`);
-
-    // Determine file type
-    const fileExtension = file.originalname.split(".").pop().toLowerCase();
-    const supportedTypes = ["pdf", "docx", "txt", "md"];
-
-    if (!supportedTypes.includes(fileExtension)) {
-      return res.status(400).json({
-        error: `Unsupported file type: ${fileExtension}. Supported: ${supportedTypes.join(", ")}`,
+app.post(
+  "/company/:companyId/upload",
+  upload.single("file"),
+  async (req, res) => {
+    if (!supabase || !openai) {
+      return res.status(503).json({
+        error: "RAG features not available - Supabase or OpenAI not configured",
       });
     }
 
-    // Create document record
-    const { data: document, error: docError } = await supabase
-      .from("company_documents")
-      .insert([
-        {
-          company_id: companyId,
-          filename: file.originalname,
-          file_type: fileExtension,
-          file_size: file.size,
-          status: "processing",
-        },
-      ])
-      .select()
-      .single();
-
-    if (docError) {
-      throw docError;
+    if (!req.auth?.userId) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
-    console.log(`📄 Created document record: ${document.id}`);
+    const { companyId } = req.params;
+    const file = req.file;
 
-    // Process document in background
-    processDocumentAsync(document.id, file.buffer, fileExtension, companyId);
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
 
-    res.status(202).json({
-      document_id: document.id,
-      status: "processing",
-      message: "Document is being processed. Check status with GET /company/:companyId/documents/:documentId",
-    });
-  } catch (error) {
-    console.error("❌ [Upload] Error:", error);
-    res.status(500).json({ error: error.message || "Failed to upload document" });
+    try {
+      console.log(
+        `📤 [Upload] Processing file: ${file.originalname} for company ${companyId}`
+      );
+
+      // Determine file type
+      const fileExtension = file.originalname.split(".").pop().toLowerCase();
+      const supportedTypes = ["pdf", "docx", "txt", "md"];
+
+      if (!supportedTypes.includes(fileExtension)) {
+        return res.status(400).json({
+          error: `Unsupported file type: ${fileExtension}. Supported: ${supportedTypes.join(
+            ", "
+          )}`,
+        });
+      }
+
+      // Create document record
+      const { data: document, error: docError } = await supabase
+        .from("company_documents")
+        .insert([
+          {
+            company_id: companyId,
+            filename: file.originalname,
+            file_type: fileExtension,
+            file_size: file.size,
+            status: "processing",
+          },
+        ])
+        .select()
+        .single();
+
+      if (docError) {
+        throw docError;
+      }
+
+      console.log(`📄 Created document record: ${document.id}`);
+
+      // Process document in background
+      processDocumentAsync(document.id, file.buffer, fileExtension, companyId);
+
+      res.status(202).json({
+        document_id: document.id,
+        status: "processing",
+        message:
+          "Document is being processed. Check status with GET /company/:companyId/documents/:documentId",
+      });
+    } catch (error) {
+      console.error("❌ [Upload] Error:", error);
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to upload document" });
+    }
   }
-});
+);
 
 /**
  * Upload URL to company knowledge base
  * POST /company/:companyId/upload-url
- * 
+ *
  * Request: { url: "https://example.com" }
  * Response: { document_id, chunks_created, status }
  */
@@ -1403,7 +1528,9 @@ app.post("/company/:companyId/upload-url", async (req, res) => {
   }
 
   try {
-    console.log(`📤 [Upload URL] Processing URL: ${url} for company ${companyId}`);
+    console.log(
+      `📤 [Upload URL] Processing URL: ${url} for company ${companyId}`
+    );
 
     // Create document record
     const { data: document, error: docError } = await supabase
@@ -1432,7 +1559,8 @@ app.post("/company/:companyId/upload-url", async (req, res) => {
     res.status(202).json({
       document_id: document.id,
       status: "processing",
-      message: "URL is being processed. Check status with GET /company/:companyId/documents/:documentId",
+      message:
+        "URL is being processed. Check status with GET /company/:companyId/documents/:documentId",
     });
   } catch (error) {
     console.error("❌ [Upload URL] Error:", error);
@@ -1443,7 +1571,7 @@ app.post("/company/:companyId/upload-url", async (req, res) => {
 /**
  * Get company knowledge base status
  * GET /company/:companyId/status
- * 
+ *
  * Response: { total_documents, total_chunks, total_tokens, total_storage_bytes, last_updated, voice_settings }
  */
 app.get("/company/:companyId/status", async (req, res) => {
@@ -1480,7 +1608,7 @@ app.get("/company/:companyId/status", async (req, res) => {
 /**
  * Get all documents for a company
  * GET /company/:companyId/documents
- * 
+ *
  * Response: { documents: [...] }
  */
 app.get("/company/:companyId/documents", async (req, res) => {
@@ -1515,7 +1643,7 @@ app.get("/company/:companyId/documents", async (req, res) => {
 /**
  * Get single document details
  * GET /company/:companyId/documents/:documentId
- * 
+ *
  * Response: { document: {...} }
  */
 app.get("/company/:companyId/documents/:documentId", async (req, res) => {
@@ -1551,7 +1679,7 @@ app.get("/company/:companyId/documents/:documentId", async (req, res) => {
 /**
  * Delete a document and its chunks
  * DELETE /company/:companyId/documents/:documentId
- * 
+ *
  * Response: { success: true }
  */
 app.delete("/company/:companyId/documents/:documentId", async (req, res) => {
@@ -1580,14 +1708,16 @@ app.delete("/company/:companyId/documents/:documentId", async (req, res) => {
     res.status(200).json({ success: true, message: "Document deleted" });
   } catch (error) {
     console.error("❌ [Delete Document] Error:", error);
-    res.status(500).json({ error: error.message || "Failed to delete document" });
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to delete document" });
   }
 });
 
 /**
  * Get company voice settings
  * GET /company/:companyId/settings
- * 
+ *
  * Response: { voice_settings: {...} }
  */
 app.get("/company/:companyId/settings", async (req, res) => {
@@ -1617,7 +1747,7 @@ app.get("/company/:companyId/settings", async (req, res) => {
 /**
  * Update company voice settings
  * PUT /company/:companyId/settings
- * 
+ *
  * Request: { voice_guidelines, brand_tone, positioning, metadata }
  * Response: { voice_settings: {...} }
  */
@@ -1643,7 +1773,9 @@ app.put("/company/:companyId/settings", async (req, res) => {
     res.status(200).json({ voice_settings: updatedSettings });
   } catch (error) {
     console.error("❌ [Update Settings] Error:", error);
-    res.status(500).json({ error: error.message || "Failed to update settings" });
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to update settings" });
   }
 });
 
@@ -1654,14 +1786,15 @@ app.put("/company/:companyId/settings", async (req, res) => {
 /**
  * Create operator tone profile from Twitter
  * POST /operator/tone/create
- * 
+ *
  * Request: { operator_id: string, twitter_url: string }
  * Response: { tone_profile: {...}, message: string }
  */
 app.post("/operator/tone/create", async (req, res) => {
   if (!supabase || !anthropic) {
-    return res.status(503).json({ 
-      error: "Tone profile features not available - Supabase or Anthropic not configured" 
+    return res.status(503).json({
+      error:
+        "Tone profile features not available - Supabase or Anthropic not configured",
     });
   }
 
@@ -1677,7 +1810,9 @@ app.post("/operator/tone/create", async (req, res) => {
   }
 
   try {
-    console.log(`🐦 [Tone Create] Creating tone profile for operator ${operatorId} from ${twitter_url}`);
+    console.log(
+      `🐦 [Tone Create] Creating tone profile for operator ${operatorId} from ${twitter_url}`
+    );
 
     // Extract username from URL
     const username = twitterService.extractUsername(twitter_url);
@@ -1691,24 +1826,30 @@ app.post("/operator/tone/create", async (req, res) => {
       if (process.env.TWITTER_IO_API_KEY) {
         tweets = await twitterService.fetchTweets(username, 150);
       } else {
-        console.log('⚠️ TWITTER_IO_API_KEY not set, using mock data');
+        console.log("⚠️ TWITTER_IO_API_KEY not set, using mock data");
         tweets = await twitterService.fetchTweetsMock(username);
       }
     } catch (fetchError) {
-      console.warn(`⚠️ Twitter API failed, using mock data: ${fetchError.message}`);
+      console.warn(
+        `⚠️ Twitter API failed, using mock data: ${fetchError.message}`
+      );
       tweets = await twitterService.fetchTweetsMock(username);
     }
 
     if (!tweets || tweets.length === 0) {
-      return res.status(400).json({ 
-        error: "No valid tweets found. User may have no posts or account is private." 
+      return res.status(400).json({
+        error:
+          "No valid tweets found. User may have no posts or account is private.",
       });
     }
 
     console.log(`✅ Retrieved ${tweets.length} tweets for analysis`);
 
     // Generate tone profile using Claude
-    const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+    const toneProfile = await toneService.generateToneProfile(
+      anthropic,
+      tweets
+    );
 
     // Check if profile already exists
     const { data: existingProfile } = await supabase
@@ -1740,13 +1881,15 @@ app.post("/operator/tone/create", async (req, res) => {
       // Create new profile
       const { data, error } = await supabase
         .from("operator_tones")
-        .insert([{
-          operator_id: operatorId,
-          twitter_url: twitter_url,
-          twitter_username: username,
-          tone_json: toneProfile,
-          last_learned_at: new Date().toISOString(),
-        }])
+        .insert([
+          {
+            operator_id: operatorId,
+            twitter_url: twitter_url,
+            twitter_username: username,
+            tone_json: toneProfile,
+            last_learned_at: new Date().toISOString(),
+          },
+        ])
         .select()
         .single();
 
@@ -1763,8 +1906,8 @@ app.post("/operator/tone/create", async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [Tone Create] Error:", error);
-    res.status(500).json({ 
-      error: error.message || "Failed to create tone profile" 
+    res.status(500).json({
+      error: error.message || "Failed to create tone profile",
     });
   }
 });
@@ -1772,7 +1915,7 @@ app.post("/operator/tone/create", async (req, res) => {
 /**
  * Get operator tone profile
  * GET /operator/tone/:operatorId
- * 
+ *
  * Response: { tone_profile: {...}, twitter_username: string, last_learned_at: timestamp }
  */
 app.get("/operator/tone/:operatorId", async (req, res) => {
@@ -1792,9 +1935,9 @@ app.get("/operator/tone/:operatorId", async (req, res) => {
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ 
-          error: "Tone profile not found for this operator" 
+      if (error.code === "PGRST116") {
+        return res.status(404).json({
+          error: "Tone profile not found for this operator",
         });
       }
       throw error;
@@ -1809,8 +1952,8 @@ app.get("/operator/tone/:operatorId", async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [Tone Get] Error:", error);
-    res.status(500).json({ 
-      error: error.message || "Failed to get tone profile" 
+    res.status(500).json({
+      error: error.message || "Failed to get tone profile",
     });
   }
 });
@@ -1818,14 +1961,14 @@ app.get("/operator/tone/:operatorId", async (req, res) => {
 /**
  * Retrain operator tone profile (force immediate re-learning)
  * POST /operator/tone/retrain
- * 
+ *
  * Request: { operator_id?: string } (if not provided, uses authenticated user)
  * Response: { tone_profile: {...}, message: string }
  */
 app.post("/operator/tone/retrain", async (req, res) => {
   if (!supabase || !anthropic) {
-    return res.status(503).json({ 
-      error: "Tone profile features not available" 
+    return res.status(503).json({
+      error: "Tone profile features not available",
     });
   }
 
@@ -1837,8 +1980,8 @@ app.post("/operator/tone/retrain", async (req, res) => {
 
   // Only allow retraining your own profile
   if (operatorId !== req.auth.userId) {
-    return res.status(403).json({ 
-      error: "You can only retrain your own tone profile" 
+    return res.status(403).json({
+      error: "You can only retrain your own tone profile",
     });
   }
 
@@ -1853,13 +1996,15 @@ app.post("/operator/tone/retrain", async (req, res) => {
       .single();
 
     if (fetchError) {
-      return res.status(404).json({ 
-        error: "No existing tone profile found. Please create one first." 
+      return res.status(404).json({
+        error: "No existing tone profile found. Please create one first.",
       });
     }
 
     const twitter_url = existingProfile.twitter_url;
-    const username = existingProfile.twitter_username || twitterService.extractUsername(twitter_url);
+    const username =
+      existingProfile.twitter_username ||
+      twitterService.extractUsername(twitter_url);
 
     // Fetch fresh tweets
     let tweets;
@@ -1867,22 +2012,27 @@ app.post("/operator/tone/retrain", async (req, res) => {
       if (process.env.TWITTER_IO_API_KEY) {
         tweets = await twitterService.fetchTweets(username, 150);
       } else {
-        console.log('⚠️ TWITTER_IO_API_KEY not set, using mock data');
+        console.log("⚠️ TWITTER_IO_API_KEY not set, using mock data");
         tweets = await twitterService.fetchTweetsMock(username);
       }
     } catch (fetchError) {
-      console.warn(`⚠️ Twitter API failed, using mock data: ${fetchError.message}`);
+      console.warn(
+        `⚠️ Twitter API failed, using mock data: ${fetchError.message}`
+      );
       tweets = await twitterService.fetchTweetsMock(username);
     }
 
     if (!tweets || tweets.length === 0) {
-      return res.status(400).json({ 
-        error: "No valid tweets found for retraining" 
+      return res.status(400).json({
+        error: "No valid tweets found for retraining",
       });
     }
 
     // Generate new tone profile
-    const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+    const toneProfile = await toneService.generateToneProfile(
+      anthropic,
+      tweets
+    );
 
     // Update profile
     const { data, error } = await supabase
@@ -1908,8 +2058,8 @@ app.post("/operator/tone/retrain", async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [Tone Retrain] Error:", error);
-    res.status(500).json({ 
-      error: error.message || "Failed to retrain tone profile" 
+    res.status(500).json({
+      error: error.message || "Failed to retrain tone profile",
     });
   }
 });
@@ -1921,15 +2071,25 @@ app.post("/operator/tone/retrain", async (req, res) => {
 /**
  * Process document asynchronously (runs in background)
  */
-async function processDocumentAsync(documentId, fileBuffer, fileType, companyId) {
+async function processDocumentAsync(
+  documentId,
+  fileBuffer,
+  fileType,
+  companyId
+) {
   try {
     console.log(`🔄 Processing document ${documentId}...`);
 
     // Process document
-    const result = await documentProcessor.processDocument(fileBuffer, fileType);
+    const result = await documentProcessor.processDocument(
+      fileBuffer,
+      fileType
+    );
 
     // Generate embeddings for all chunks
-    console.log(`🧠 Generating embeddings for ${result.chunks.length} chunks...`);
+    console.log(
+      `🧠 Generating embeddings for ${result.chunks.length} chunks...`
+    );
     const chunkTexts = result.chunks.map((c) => c.content);
     const embeddings = await documentProcessor.generateEmbeddingsBatch(
       chunkTexts,
@@ -1982,7 +2142,9 @@ async function processUrlAsync(documentId, url, companyId) {
     const result = await documentProcessor.processUrl(url);
 
     // Generate embeddings for all chunks
-    console.log(`🧠 Generating embeddings for ${result.chunks.length} chunks...`);
+    console.log(
+      `🧠 Generating embeddings for ${result.chunks.length} chunks...`
+    );
     const chunkTexts = result.chunks.map((c) => c.content);
     const embeddings = await documentProcessor.generateEmbeddingsBatch(
       chunkTexts,
@@ -2033,10 +2195,13 @@ app.get("/", (req, res) => {
     version: "2.0.0",
     endpoints: {
       health: "GET /health - Check if backend is running",
-      generate: "POST /generate - Generate a reply (body: { text: 'post text' })",
+      generate:
+        "POST /generate - Generate a reply (body: { text: 'post text' })",
       usage: "GET /usage - Get current usage stats",
-      companyUpload: "POST /company/:id/upload - Upload document to company knowledge",
-      companyUploadUrl: "POST /company/:id/upload-url - Add URL to company knowledge",
+      companyUpload:
+        "POST /company/:id/upload - Upload document to company knowledge",
+      companyUploadUrl:
+        "POST /company/:id/upload-url - Add URL to company knowledge",
       companyStatus: "GET /company/:id/status - Get company knowledge stats",
       companyDocuments: "GET /company/:id/documents - List company documents",
       companySettings: "GET /company/:id/settings - Get company voice settings",
@@ -2082,7 +2247,7 @@ app.listen(PORT, () => {
 // AUTOMATIC TONE PROFILE RE-LEARNING
 // ==========================================
 
-const cron = require('node-cron');
+const cron = require("node-cron");
 
 /**
  * Automatic tone profile re-learning job
@@ -2091,29 +2256,31 @@ const cron = require('node-cron');
  */
 if (supabase && anthropic) {
   // Schedule: Run every day at 2:00 AM
-  cron.schedule('0 2 * * *', async () => {
+  cron.schedule("0 2 * * *", async () => {
     try {
-      console.log('\n🔄 [Cron] Starting automatic tone profile re-learning...');
+      console.log("\n🔄 [Cron] Starting automatic tone profile re-learning...");
 
       // Find profiles that need re-learning (30+ days old)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       const { data: staleProfiles, error } = await supabase
-        .from('operator_tones')
-        .select('*')
-        .lt('last_learned_at', thirtyDaysAgo.toISOString());
+        .from("operator_tones")
+        .select("*")
+        .lt("last_learned_at", thirtyDaysAgo.toISOString());
 
       if (error) {
         throw error;
       }
 
       if (!staleProfiles || staleProfiles.length === 0) {
-        console.log('✅ [Cron] No profiles need re-learning');
+        console.log("✅ [Cron] No profiles need re-learning");
         return;
       }
 
-      console.log(`🔄 [Cron] Found ${staleProfiles.length} profiles to re-learn`);
+      console.log(
+        `🔄 [Cron] Found ${staleProfiles.length} profiles to re-learn`
+      );
 
       // Process each profile
       let successCount = 0;
@@ -2121,9 +2288,13 @@ if (supabase && anthropic) {
 
       for (const profile of staleProfiles) {
         try {
-          console.log(`🔄 [Cron] Re-learning profile for operator ${profile.operator_id}...`);
+          console.log(
+            `🔄 [Cron] Re-learning profile for operator ${profile.operator_id}...`
+          );
 
-          const username = profile.twitter_username || twitterService.extractUsername(profile.twitter_url);
+          const username =
+            profile.twitter_username ||
+            twitterService.extractUsername(profile.twitter_url);
 
           // Fetch fresh tweets
           let tweets;
@@ -2134,49 +2305,70 @@ if (supabase && anthropic) {
               tweets = await twitterService.fetchTweetsMock(username);
             }
           } catch (fetchError) {
-            console.warn(`⚠️ [Cron] Twitter API failed for @${username}, using mock data`);
+            console.warn(
+              `⚠️ [Cron] Twitter API failed for @${username}, using mock data`
+            );
             tweets = await twitterService.fetchTweetsMock(username);
           }
 
           if (!tweets || tweets.length === 0) {
-            console.warn(`⚠️ [Cron] No tweets found for @${username}, skipping`);
+            console.warn(
+              `⚠️ [Cron] No tweets found for @${username}, skipping`
+            );
             failCount++;
             continue;
           }
 
           // Generate new tone profile
-          const toneProfile = await toneService.generateToneProfile(anthropic, tweets);
+          const toneProfile = await toneService.generateToneProfile(
+            anthropic,
+            tweets
+          );
 
           // Update profile in database
           await supabase
-            .from('operator_tones')
+            .from("operator_tones")
             .update({
               tone_json: toneProfile,
               last_learned_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             })
-            .eq('operator_id', profile.operator_id);
+            .eq("operator_id", profile.operator_id);
 
-          console.log(`✅ [Cron] Successfully re-learned profile for ${profile.operator_id}`);
+          console.log(
+            `✅ [Cron] Successfully re-learned profile for ${profile.operator_id}`
+          );
           successCount++;
 
           // Add a small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (profileError) {
-          console.error(`❌ [Cron] Failed to re-learn profile for ${profile.operator_id}:`, profileError.message);
+          console.error(
+            `❌ [Cron] Failed to re-learn profile for ${profile.operator_id}:`,
+            profileError.message
+          );
           failCount++;
         }
       }
 
-      console.log(`\n✅ [Cron] Tone re-learning complete: ${successCount} success, ${failCount} failed\n`);
+      console.log(
+        `\n✅ [Cron] Tone re-learning complete: ${successCount} success, ${failCount} failed\n`
+      );
     } catch (error) {
-      console.error('❌ [Cron] Error in automatic tone re-learning:', error.message);
+      console.error(
+        "❌ [Cron] Error in automatic tone re-learning:",
+        error.message
+      );
     }
   });
 
-  console.log('⏰ Automatic tone re-learning scheduler started (runs daily at 2 AM)');
+  console.log(
+    "⏰ Automatic tone re-learning scheduler started (runs daily at 2 AM)"
+  );
 } else {
-  console.log('⚠️ Automatic tone re-learning disabled (Supabase or Anthropic not configured)');
+  console.log(
+    "⚠️ Automatic tone re-learning disabled (Supabase or Anthropic not configured)"
+  );
 }
 
 /**
