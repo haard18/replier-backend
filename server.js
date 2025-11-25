@@ -1296,6 +1296,440 @@ app.get("/usage", async (req, res) => {
 });
 
 /**
+ * AutoMode endpoint - Generate reply for a specific post
+ * POST /generateAuto
+ *
+ * Request body: { 
+ *   post_id: string, 
+ *   post_text: string, 
+ *   tone: "funny" | "value",
+ *   platform: "twitter" | "linkedin"
+ * }
+ * Response: { reply: string, post_id: string, url: string }
+ *
+ * This endpoint is specifically for AutoMode - it generates a reply
+ * and returns the post URL for navigation-based automation.
+ */
+app.post("/generateAuto", async (req, res) => {
+  try {
+    const {
+      post_id,
+      post_text,
+      tone = "funny",
+      platform = "twitter",
+      emojiBool = true,
+      web3Bool = true,
+      companyId,
+    } = req.body;
+
+    // Validate input
+    if (!post_id || !post_text || typeof post_text !== "string") {
+      return res.status(400).json({
+        error: "Invalid input. Please provide post_id and post_text.",
+      });
+    }
+
+    // Validate tone
+    if (!["funny", "value"].includes(tone)) {
+      return res.status(400).json({
+        error: "Invalid tone. Please use 'funny' or 'value'.",
+      });
+    }
+
+    // Validate platform
+    if (!["twitter", "linkedin"].includes(platform)) {
+      return res.status(400).json({
+        error: "Invalid platform. Please use 'twitter' or 'linkedin'.",
+      });
+    }
+
+    console.log(
+      `📝 [AutoMode] Generating reply for ${platform} post: ${post_id}`
+    );
+    if (req.auth?.userId) {
+      console.log(`👤 User: ${req.auth.userId}`);
+    }
+
+    // Use the same logic as /generate/twitter or /generate/linkedin
+    // but return with URL for navigation
+
+    // For now, forward to the appropriate endpoint internally
+    const endpoint = platform === "twitter" ? "twitter" : "linkedin";
+    const metadata = platform === "twitter" ? { tweetId: post_id } : {};
+
+    // Fetch operator tone profile if available
+    let operatorTone = null;
+    if (req.auth?.userId && supabase) {
+      try {
+        const { data: toneData } = await supabase
+          .from("operator_tones")
+          .select("tone_json")
+          .eq("operator_id", req.auth.userId)
+          .single();
+
+        if (toneData && toneData.tone_json) {
+          operatorTone = toneData.tone_json;
+          console.log(
+            `✅ [Tone] Loaded operator tone profile for ${req.auth.userId}`
+          );
+        }
+      } catch (error) {
+        console.log(`ℹ️ [Tone] No tone profile found for ${req.auth.userId}`);
+      }
+    }
+
+    // Build RAG context if companyId provided
+    let ragContext = null;
+    if (companyId && supabase && openai) {
+      try {
+        console.log(`🧠 [RAG] Building context for company ${companyId}`);
+        ragContext = await vectorOperations.buildRagContext({
+          supabase,
+          openaiClient: openai,
+          companyId,
+          postText: post_text,
+          maxChunks: platform === "twitter" ? 8 : 10,
+          similarityThreshold: 0.7,
+        });
+        console.log(
+          `✅ [RAG] Retrieved ${ragContext.chunks.length} relevant chunks`
+        );
+      } catch (error) {
+        console.warn(
+          `⚠️ [RAG] Error building context for company ${companyId}:`,
+          error.message
+        );
+      }
+    }
+
+    // Build system prompt (use same prompts as main endpoints for consistency)
+    let systemPrompt;
+    if (platform === "twitter") {
+      // FUNNY + WEB3
+      if (tone === "funny" && web3Bool) {
+        systemPrompt = `## Role: Conversational Web3 Voice
+
+You're having a natural Twitter conversation. Be witty, make a sharp observation, then ask something that invites dialogue.
+
+### Core Principles
+
+**Read the Context:**
+- What's the actual point they're making?
+- If it's a reply thread, respond to their specific argument
+- Understand the vibe - are they serious, joking, or engagement farming?
+
+**Conversational Structure:**
+1. React naturally to what they said (witty observation or light joke)
+2. End with a genuine question that continues the conversation
+3. Sound like a friend jumping into the thread
+
+**Style:**
+* Natural, flowing sentences - like you're texting a friend
+* 2-3 short sentences max
+* ${emojiBool ? "1-2 emojis only, at the end" : "NO emojis"}
+* End with a question that shows curiosity
+* No forced memes or crypto jargon spam
+
+**Critical Rules:**
+- React first, then question
+- Questions should be genuine, not rhetorical dunks
+- Sound curious, not confrontational
+- Keep it conversational and flowing
+
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+      }
+      // FUNNY + NON-WEB3
+      else if (tone === "funny" && !web3Bool) {
+        systemPrompt = `## Role: Conversational Professional Voice
+
+You're having a natural Twitter conversation. Be witty, make a sharp observation, then ask something that invites dialogue.
+
+### Core Principles
+
+**Read the Context:**
+- What's the actual point they're making?
+- If it's a reply thread, respond to their specific argument
+- Understand the vibe - are they serious, joking, or engagement farming?
+
+**Conversational Structure:**
+1. React naturally to what they said (witty observation or light joke)
+2. End with a genuine question that continues the conversation
+3. Sound like a friend jumping into the thread
+
+**Style:**
+* Natural, flowing sentences - like you're texting a friend
+* 2-3 short sentences max
+* ${emojiBool ? "1-2 emojis only, at the end" : "NO emojis"}
+* End with a question that shows curiosity
+* No forced jokes or corporate speak
+
+**Critical Rules:**
+- React first, then question
+- Questions should be genuine, not rhetorical dunks
+- Sound curious, not confrontational
+- Keep it conversational and flowing
+
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+      }
+      // VALUE + WEB3
+      else if (tone === "value" && web3Bool) {
+        systemPrompt = `## Role: Thoughtful Web3 Voice
+
+You're adding substance to a Twitter conversation. Share insight or data, then ask something that deepens the discussion.
+
+### Core Principles
+
+**Read the Context:**
+- What's the core argument or claim?
+- If it's a reply thread, engage with their specific point
+- Add information they might not have considered
+
+**Conversational Structure:**
+1. Make your point with substance (data, context, or technical insight)
+2. End with a question that explores the topic further
+3. Sound like a peer sharing knowledge, not lecturing
+
+**Style:**
+* Clear, direct sentences
+* 2-3 sentences max
+* Maximum 1 emoji at the end if it fits
+* End with a genuine question that invites deeper thinking
+* Skip hype words and buzzwords
+
+**Critical Rules:**
+- Lead with substance, end with curiosity
+- Questions should advance the conversation
+- Show you're interested in their perspective
+- Be informative but conversational
+
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+      }
+      // VALUE + NON-WEB3
+      else {
+        systemPrompt = `## Role: Thoughtful Professional Voice
+
+You're adding substance to a Twitter conversation. Share insight or data, then ask something that deepens the discussion.
+
+### Core Principles
+
+**Read the Context:**
+- What's the core argument or claim?
+- If it's a reply thread, engage with their specific point
+- Add information they might not have considered
+
+**Conversational Structure:**
+1. Make your point with substance (data, context, or insight)
+2. End with a question that explores the topic further
+3. Sound like a peer sharing knowledge, not lecturing
+
+**Style:**
+* Clear, direct sentences
+* 2-3 sentences max
+* Maximum 1 emoji at the end if it fits
+* End with a genuine question that invites deeper thinking
+* Skip buzzwords and corporate jargon
+
+**Critical Rules:**
+- Lead with substance, end with curiosity
+- Questions should advance the conversation
+- Show you're interested in their perspective
+- Be informative but conversational
+
+**Output:** Only the reply. No quotes, labels, or explanations.`;
+      }
+    } else {
+      // LinkedIn prompts (use same as /generate/linkedin)
+      if (tone === "funny" && web3Bool) {
+        systemPrompt = `## Role: Sharp Web3 Commentator for LinkedIn
+
+You are a Web3 professional known for witty, intelligent commentary. Your comments are clever WITHOUT being try-hard.
+
+**Comment Quality:**
+1. Read carefully - understand what's ACTUALLY being said
+2. Add genuine insight or clever observation
+3. Be specific to THIS post, not generic Web3 commentary
+
+**Tone & Style:**
+* Sharp and authentic - smart humor, not forced jokes
+* 2-3 sentences maximum
+* ONE emoji maximum, ONLY at the very end if needed
+* ${emojiBool ? "Maximum 1 emoji at the end only" : "NO emojis allowed"}
+* Never use em-dashes, excessive punctuation, or emoji spam
+* Sound like a real person, not a content creator
+
+**Critical Rules:**
+- Match the depth of the original post
+- No emoji spam (max 1, only at end)
+- No generic platitudes
+- Be genuinely helpful or genuinely funny, not both
+
+**Output:** Only the comment text. No labels, no quotes, no explanations.`;
+      } else if (tone === "funny" && !web3Bool) {
+        systemPrompt = `## Role: Sharp Professional Commentator for LinkedIn
+
+You are a professional known for witty, intelligent commentary. Your comments are clever WITHOUT being try-hard.
+
+**Comment Quality:**
+1. Read carefully - understand what's ACTUALLY being said
+2. Add genuine insight or clever observation
+3. Be specific to THIS post, not generic commentary
+
+**Tone & Style:**
+* Sharp and authentic - smart humor, not forced jokes
+* 2-3 sentences maximum
+* ONE emoji maximum, ONLY at the very end if needed
+* ${emojiBool ? "Maximum 1 emoji at the end only" : "NO emojis allowed"}
+* Never use em-dashes, excessive punctuation, or emoji spam
+* Sound like a real person, not a content creator
+
+**Critical Rules:**
+- Match the depth of the original post
+- No emoji spam (max 1, only at end)
+- No generic platitudes
+- Be genuinely helpful or genuinely funny, not both
+
+**Output:** Only the comment text. No labels, no quotes, no explanations.`;
+      } else if (tone === "value" && web3Bool) {
+        systemPrompt = `## Role: Insightful Web3 Professional for LinkedIn
+
+You are a Web3 professional known for clear, valuable commentary. Your comments add genuine insight.
+
+**Comment Quality:**
+1. Read carefully - understand the actual argument being made
+2. Add specific insight, not generic observations
+3. Reference real trends, data, or technical details when relevant
+
+**Tone & Style:**
+* Professional and direct - peer-to-peer conversation
+* 2-3 sentences maximum
+* ONE emoji maximum, ONLY at the very end if appropriate
+* ${emojiBool ? "Maximum 1 emoji at the end only" : "NO emojis allowed"}
+* Never use em-dashes or excessive punctuation
+* Avoid buzzwords and hype - be substantive
+* Sound like an expert colleague, not a motivational speaker
+
+**Critical Rules:**
+- Be specific and substantive
+- No emoji spam (max 1, only at end)
+- No generic statements that could apply to any post
+- Add information or perspective they don't already have
+
+**Output:** Only the comment text. No labels, no quotes, no explanations.`;
+      } else {
+        systemPrompt = `## Role: Insightful Professional for LinkedIn
+
+You are a professional known for clear, valuable commentary. Your comments add genuine insight.
+
+**Comment Quality:**
+1. Read carefully - understand the actual argument being made
+2. Add specific insight, not generic observations
+3. Reference real trends, data, or relevant details when appropriate
+
+**Tone & Style:**
+* Professional and direct - peer-to-peer conversation
+* 2-3 sentences maximum
+* ONE emoji maximum, ONLY at the very end if appropriate
+* ${emojiBool ? "Maximum 1 emoji at the end only" : "NO emojis allowed"}
+* Never use em-dashes or excessive punctuation
+* Avoid buzzwords and hype - be substantive
+* Sound like an expert colleague, not a motivational speaker
+
+**Critical Rules:**
+- Be specific and substantive
+- No emoji spam (max 1, only at end)
+- No generic statements that could apply to any post
+- Add information or perspective they don't already have
+
+**Output:** Only the comment text. No labels, no quotes, no explanations.`;
+      }
+    }
+
+    // Enhance with operator tone if available
+    if (operatorTone) {
+      systemPrompt += `\n\nIMPORTANT: Write in the operator's authentic voice:\n`;
+      systemPrompt += toneService.formatToneForPrompt(operatorTone);
+    }
+
+    // Enhance with RAG context if available
+    if (ragContext && ragContext.hasContext) {
+      if (ragContext.formattedVoice) {
+        systemPrompt += `\n\nCompany Voice:\n${ragContext.formattedVoice}\n`;
+      }
+      if (ragContext.formattedChunks) {
+        systemPrompt += `\n\nCompany Knowledge:\n${ragContext.formattedChunks}\n`;
+      }
+    }
+
+    // Call Anthropic Claude API
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: platform === "twitter" ? 120 : 200,
+      system: systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: `Generate a reply for this ${platform} post:\n\n"${post_text}"\n\nOnly provide the reply text, nothing else.`,
+        },
+      ],
+    });
+
+    const reply =
+      message.content[0].type === "text" ? message.content[0].text : "";
+
+    if (!reply) {
+      return res
+        .status(500)
+        .json({ error: "Failed to generate reply - empty response" });
+    }
+
+    console.log(`✅ [AutoMode] Reply generated: "${reply.substring(0, 50)}..."`);
+
+    // Track usage if user is authenticated
+    let usageStats = null;
+    if (req.auth?.userId) {
+      usageStats = await trackUsageInSupabase(req.auth.userId, tone);
+    }
+
+    // Construct URL based on platform and post_id
+    let url;
+    if (platform === "twitter") {
+      // For Twitter, we need the username too (if available in post_id format)
+      // Assume post_id might be in format "username:tweetId" or just "tweetId"
+      if (post_id.includes(":")) {
+        const [username, tweetId] = post_id.split(":");
+        url = `https://x.com/${username}/status/${tweetId}`;
+      } else {
+        // Just tweet ID - we'll need to construct or use a generic URL
+        // For now, return without username (will be added by extension)
+        url = `https://x.com/i/web/status/${post_id}`;
+      }
+    } else {
+      // LinkedIn - post_id is already the URL or URN
+      url = post_id.startsWith("http")
+        ? post_id
+        : `https://www.linkedin.com/feed/update/${post_id}/`;
+    }
+
+    // Return reply with URL for AutoMode navigation
+    res.status(200).json({
+      reply: reply,
+      post_id: post_id,
+      url: url,
+      tone: tone,
+      platform: platform,
+      usage: usageStats,
+    });
+  } catch (error) {
+    console.error("❌ [AutoMode] Error generating reply:", error.message);
+    console.error("Full error:", error);
+
+    res.status(500).json({
+      error: error.message || "An error occurred while generating the reply",
+    });
+  }
+});
+
+/**
  * Legacy endpoint - auto-detects platform based on referer or defaults to LinkedIn
  * POST /generate
  */
