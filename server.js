@@ -826,7 +826,7 @@ app.post("/generate/twitter", async (req, res) => {
       text,
       tone,
       emojiBool,
-      web3Bool = true,
+      web3Bool ,
       companyId,
       tweetId,
     } = req.body;
