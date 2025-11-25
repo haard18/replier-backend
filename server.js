@@ -88,6 +88,8 @@ try {
 // Import document processing and vector operations modules
 const documentProcessor = require("./documentProcessor");
 const vectorOperations = require("./vectorOperations");
+const twitterService = require("./twitterService");
+const toneService = require("./toneService");
 
 // Initialize multer for file uploads
 const multer = require("multer");
@@ -750,12 +752,18 @@ Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
  */
 app.post("/generate/twitter", async (req, res) => {
   try {
-    const { text, tone, emojiBool, web3Bool = true, companyId } = req.body;
+    const { text, tone, emojiBool, web3Bool = true, companyId, tweetId } = req.body;
 
     // Validate input
-    if (!text || typeof text !== "string" || text.trim().length === 0|| emojiBool === undefined) {
+    if (!text || typeof text !== "string" || text.trim().length === 0 || emojiBool === undefined) {
       return res.status(400).json({
         error: "Invalid input. Please provide a 'text' field with post content.",
+      });
+    }
+
+    if (tweetId && typeof tweetId !== "string") {
+      return res.status(400).json({
+        error: "Invalid tweetId. It must be a string.",
       });
     }
 
@@ -766,7 +774,7 @@ app.post("/generate/twitter", async (req, res) => {
       });
     }
 
-    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool}) with companyId: ${companyId}`);
+    console.log(`📝 [Twitter] Generating reply for: "${text.substring(0, 50)}..." (tone: ${tone}, web3: ${web3Bool}) with companyId: ${companyId} tweetId: ${tweetId || "N/A"}`);
     if (req.auth?.userId) {
       console.log(`👤 User: ${req.auth.userId}`);
     }
@@ -818,6 +826,33 @@ app.post("/generate/twitter", async (req, res) => {
     } else if (companyId && (!supabase || !openai)) {
       console.warn(`⚠️ [RAG] CompanyId provided but RAG not available (Supabase: ${!!supabase}, OpenAI: ${!!openai})`);
     }
+
+    // Fetch existing replies for additional context
+    let tweetReplies = [];
+    if (tweetId) {
+      try {
+        tweetReplies = await twitterService.fetchTweetReplies(tweetId, 10);
+        console.log(`💬 [Twitter] Loaded ${tweetReplies.length} replies for tweet ${tweetId}`);
+      } catch (replyError) {
+        console.warn(`⚠️ [Twitter] Could not load replies for tweet ${tweetId}:`, replyError.message);
+      }
+    }
+
+    const repliesContextText =
+      tweetReplies.length > 0
+        ? `\n\nRecent replies already in the thread (most recent first):\n${tweetReplies
+            .map((reply, index) => {
+              const author = reply.authorUsername
+                ? `@${reply.authorUsername}`
+                : reply.authorName || "Unknown user";
+              const metrics =
+                reply.likeCount && reply.likeCount > 0
+                  ? ` • ${reply.likeCount} likes`
+                  : "";
+              return `${index + 1}. ${author}${metrics}: ${reply.text}`;
+            })
+            .join("\n")}\n\nUse these to understand the conversation flow. Do NOT repeat them verbatim.`
+        : "";
 
     // Build system prompt based on tone and web3 setting
     let systemPrompt;
@@ -1050,6 +1085,8 @@ Good: "College grads still earn 67% more lifetime. ROI varies wildly by major an
           content: `Generate a ${web3Bool ? 'Web3 ' : ''}comment for this Twitter post or reply:
 
 "${text}"
+
+${repliesContextText}
 
 Context: This could be a main tweet or a reply to someone. Read carefully and respond appropriately.
 
@@ -1613,10 +1650,6 @@ app.put("/company/:companyId/settings", async (req, res) => {
 // ==========================================
 // OPERATOR TONE PROFILE ENDPOINTS
 // ==========================================
-
-// Import tone services
-const twitterService = require('./twitterService');
-const toneService = require('./toneService');
 
 /**
  * Create operator tone profile from Twitter

@@ -241,9 +241,118 @@ function fetchTweetsMock(username) {
   ]);
 }
 
+/**
+ * Fetch replies for a tweet using Twitter.io API
+ * @param {string} tweetId - Original tweet ID
+ * @param {number} maxReplies - Maximum number of replies to return
+ * @returns {Promise<Array>} Array of reply metadata objects
+ */
+async function fetchTweetReplies(tweetId, maxReplies = 10) {
+  if (!tweetId) {
+    throw new Error('tweetId is required to fetch replies');
+  }
+
+  if (!process.env.TWITTER_IO_API_KEY) {
+    throw new Error('TWITTER_IO_API_KEY is required. Set it in your environment to enable reply fetching.');
+  }
+
+  try {
+    console.log(`💬 Fetching up to ${maxReplies} replies for tweet ${tweetId}`);
+
+    const collectedReplies = [];
+    let cursor = '';
+    let hasNextPage = true;
+    let pageCount = 0;
+    const maxPages = Math.max(1, Math.ceil(maxReplies / 20));
+
+    while (hasNextPage && collectedReplies.length < maxReplies && pageCount < maxPages) {
+      const params = { tweetId };
+      if (cursor) {
+        params.cursor = cursor;
+      }
+
+      const response = await axios.get('https://api.twitterapi.io/twitter/tweet/replies', {
+        params,
+        headers: {
+          'X-API-Key': process.env.TWITTER_IO_API_KEY || '',
+          'Accept': 'application/json',
+        },
+        timeout: 15000,
+      });
+
+      const rawData = response.data || {};
+      if (rawData.status === 'error') {
+        throw new Error(rawData.message || 'Twitter API returned an error while fetching replies');
+      }
+
+      const payload = rawData.replies ? rawData : rawData.data || {};
+      const replies = payload.replies;
+      if (!Array.isArray(replies)) {
+        console.warn('⚠️ Unexpected replies structure from Twitter API:', JSON.stringify(rawData).substring(0, 200));
+        break;
+      }
+
+      console.log(`📨 Loaded ${replies.length} replies (page ${pageCount + 1})`);
+
+      for (const reply of replies) {
+        if (!reply?.text) continue;
+        collectedReplies.push({
+          id: reply.id,
+          text: reply.text.trim(),
+          inReplyToId: reply.inReplyToId || reply.in_reply_to_status_id,
+          authorName: reply.author?.name || '',
+          authorUsername: reply.author?.userName || reply.author?.username || '',
+          likeCount: reply.likeCount ?? reply.favoriteCount ?? 0,
+          replyCount: reply.replyCount ?? 0,
+          createdAt: reply.createdAt || reply.created_at,
+        });
+        if (collectedReplies.length >= maxReplies) {
+          break;
+        }
+      }
+
+      const nextCursor = payload.next_cursor || '';
+      hasNextPage = Boolean(payload.has_next_page && nextCursor);
+      cursor = nextCursor;
+      pageCount++;
+
+      if (hasNextPage && collectedReplies.length < maxReplies) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
+
+    console.log(`✅ Retrieved ${collectedReplies.length} replies for tweet ${tweetId}`);
+    return collectedReplies.slice(0, maxReplies);
+  } catch (error) {
+    console.error(`❌ Error fetching replies for tweet ${tweetId}:`, error.message);
+
+    if (error.response) {
+      if (error.response.status === 404) {
+        throw new Error(`Tweet ${tweetId} not found or deleted`);
+      }
+      if (error.response.status === 429) {
+        throw new Error('Twitter API rate limit reached while fetching replies. Please try again later.');
+      }
+      if (error.response.status === 401 || error.response.status === 403) {
+        throw new Error('Twitter API authentication failed when fetching replies. Check TWITTER_IO_API_KEY.');
+      }
+      if (error.response.status === 400) {
+        throw new Error(`Invalid reply request: ${error.response.data?.message || 'Bad request'}`);
+      }
+    }
+
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      throw new Error('Twitter API request for replies timed out. Please try again.');
+    }
+
+    throw new Error(`Failed to fetch tweet replies: ${error.message}`);
+  }
+}
+
 module.exports = {
   extractUsername,
   fetchTweets,
   fetchTweetsMock,
+  fetchTweetReplies,
 };
 
