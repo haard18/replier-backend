@@ -1146,13 +1146,7 @@ Reply: "College grads still earn 67% more lifetime, though ROI varies wildly by 
 **Output:** Only the reply. No quotes, labels, or explanations.`;
     }
 
-    // Enhance system prompt with operator tone profile if available
-    if (operatorTone) {
-      systemPrompt += `\n\n---\n\n## CRITICAL: Personal Writing Style\n\n`;
-      systemPrompt += `You must write in the operator's authentic voice. This is their actual writing style from Twitter:\n\n`;
-      systemPrompt += toneService.formatToneForPrompt(operatorTone);
-      systemPrompt += `\n**IMPORTANT:** Replicate this exact writing style while following the role guidelines above. The response should sound like THIS person wrote it.`;
-    }
+
 
     // Enhance system prompt with RAG context if available
     if (ragContext && ragContext.hasContext) {
