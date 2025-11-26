@@ -544,6 +544,7 @@ Good: "L2s have dropped fees 95%+ already. The UX problem is wallets, not cost."
 - No emoji spam (max 1, only at end)
 - No generic platitudes
 - Be genuinely helpful or genuinely funny, not both
+- NEVER just rephrase the original post. Add a new angle.
 
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     } else if (tone === "funny" && !web3Bool) {
@@ -592,6 +593,7 @@ Good: "Companies spent billions on office space they can't fill. That's not a fa
 - No emoji spam (max 1, only at end)
 - No generic platitudes
 - Be genuinely helpful or genuinely funny, not both
+- NEVER just rephrase the original post. Add a new angle.
 
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     } else if (tone === "value" && web3Bool) {
@@ -641,6 +643,7 @@ Good: "Event tickets, certification, and supply chain tracking are working use c
 - No emoji spam (max 1, only at end)
 - No generic statements that could apply to any post
 - Add information or perspective they don't already have
+- NEVER just rephrase the original post. Provide NEW info.
 
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     } else {
@@ -691,6 +694,7 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 - No emoji spam (max 1, only at end)
 - No generic statements that could apply to any post
 - Add information or perspective they don't already have
+- NEVER just rephrase the original post. Provide NEW info.
 
 **Output:** Only the comment text. No labels, no quotes, no explanations.`;
     }
@@ -733,6 +737,8 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 "${text}"
 
 Context: This could be a main post or a reply to someone's comment. Read it carefully and respond appropriately.
+
+CRITICAL: Do NOT regurgitate or rephrase the original text. You must add NEW information, a counter-point, or a relevant question.
 
 Remember: Only provide the comment itself, nothing else. No quotes, no labels.`,
         },
@@ -1007,6 +1013,7 @@ Reply: "Interesting take after the 7th outage this year. What makes you think it
 - Questions should be genuine, not rhetorical dunks
 - Sound curious, not confrontational
 - Keep it conversational and flowing
+- NEVER just rephrase the original post. Add a new angle.
 
 **Output:** Only the reply. No quotes, labels, or explanations.`;
     }
@@ -1052,6 +1059,7 @@ Reply: "Bold stance from presumably a tea person. What's your drink of choice th
 - Questions should be genuine, not rhetorical dunks
 - Sound curious, not confrontational
 - Keep it conversational and flowing
+- NEVER just rephrase the original post. Add a new angle.
 
 **Output:** Only the reply. No quotes, labels, or explanations.`;
     }
@@ -1097,6 +1105,7 @@ Reply: "Aave processes $2B monthly in actual loans. The issue is 90% is yield fa
 - Questions should advance the conversation
 - Show you're interested in their perspective
 - Be informative but conversational
+- NEVER just rephrase the original post. Provide NEW info or a specific question.
 
 **Output:** Only the reply. No quotes, labels, or explanations.`;
     }
@@ -1142,6 +1151,7 @@ Reply: "College grads still earn 67% more lifetime, though ROI varies wildly by 
 - Questions should advance the conversation
 - Show you're interested in their perspective
 - Be informative but conversational
+- NEVER just rephrase the original post. Provide NEW info or a specific question.
 
 **Output:** Only the reply. No quotes, labels, or explanations.`;
     }
@@ -1180,6 +1190,8 @@ Reply: "College grads still earn 67% more lifetime, though ROI varies wildly by 
 ${repliesContextText}
 
 Context: This could be a main tweet or a reply to someone. Read carefully and respond appropriately.
+
+CRITICAL: Do NOT regurgitate or rephrase the original text. You must add NEW information, a counter-point, or a relevant question.
 
 Remember: Keep it short (1-2 sentences), maximum 2 emojis at the END only. Only provide the reply itself, nothing else.`,
         },
