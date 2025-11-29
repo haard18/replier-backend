@@ -753,7 +753,7 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
 
 "${text}"${authorName ? `\n\nAuthor: ${authorName}` : ""}
 
-Context: This could be a main post or a reply to someone's comment. Read it carefully and respond appropriately.${authorName ? ` When appropriate, you may address the author by name (${authorName}) to make your comment more personal and engaging.` : ""}
+Context: This could be a main post or a reply to someone's comment. Read it carefully and respond appropriately.${authorName ? `you should use the author's name: (${authorName}) to make your comment more personal and engaging.` : ""}
 
 CRITICAL: Do NOT regurgitate or rephrase the original text. You must add NEW information, a counter-point, or a relevant question.
 
