@@ -405,6 +405,7 @@ app.post("/generate/linkedin", async (req, res) => {
       emojiBool,
       web3Bool = true,
       companyId,
+      authorName,
     } = req.body;
 
     // Validate input
@@ -417,6 +418,22 @@ app.post("/generate/linkedin", async (req, res) => {
       return res.status(400).json({
         error:
           "Invalid input. Please provide a 'text' field with post content.",
+      });
+    }
+
+    // Validate minimum text length to prevent poor quality responses
+    if (text.trim().length < 20) {
+      return res.status(400).json({
+        error:
+          "Post text too short. Minimum 20 characters required for quality replies.",
+      });
+    }
+
+    // Optional: Validate maximum length to prevent token waste
+    if (text.trim().length > 5000) {
+      return res.status(400).json({
+        error:
+          "Post text too long. Maximum 5000 characters allowed.",
       });
     }
 
@@ -734,9 +751,9 @@ Good: "Certifications validate baseline knowledge, but portfolio work demonstrat
             web3Bool ? "Web3 " : ""
           }professional comment for this LinkedIn post or comment:
 
-"${text}"
+"${text}"${authorName ? `\n\nAuthor: ${authorName}` : ""}
 
-Context: This could be a main post or a reply to someone's comment. Read it carefully and respond appropriately.
+Context: This could be a main post or a reply to someone's comment. Read it carefully and respond appropriately.${authorName ? ` When appropriate, you may address the author by name (${authorName}) to make your comment more personal and engaging.` : ""}
 
 CRITICAL: Do NOT regurgitate or rephrase the original text. You must add NEW information, a counter-point, or a relevant question.
 
@@ -835,6 +852,7 @@ app.post("/generate/twitter", async (req, res) => {
       web3Bool ,
       companyId,
       tweetId,
+      authorName,
     } = req.body;
 
     // Validate input
@@ -847,6 +865,22 @@ app.post("/generate/twitter", async (req, res) => {
       return res.status(400).json({
         error:
           "Invalid input. Please provide a 'text' field with post content.",
+      });
+    }
+
+    // Validate minimum text length to prevent poor quality responses
+    if (text.trim().length < 20) {
+      return res.status(400).json({
+        error:
+          "Post text too short. Minimum 20 characters required for quality replies.",
+      });
+    }
+
+    // Optional: Validate maximum length to prevent token waste
+    if (text.trim().length > 5000) {
+      return res.status(400).json({
+        error:
+          "Post text too long. Maximum 5000 characters allowed.",
       });
     }
 
@@ -1185,11 +1219,11 @@ Reply: "College grads still earn 67% more lifetime, though ROI varies wildly by 
             web3Bool ? "Web3 " : ""
           }comment for this Twitter post or reply:
 
-"${text}"
+"${text}"${authorName ? `\n\nAuthor: ${authorName}` : ""}
 
 ${repliesContextText}
 
-Context: This could be a main tweet or a reply to someone. Read carefully and respond appropriately.
+Context: This could be a main tweet or a reply to someone. Read carefully and respond appropriately.${authorName ? ` When appropriate, you may address the author by name (${authorName}) to make your comment more personal and engaging.` : ""}
 
 CRITICAL: Do NOT regurgitate or rephrase the original text. You must add NEW information, a counter-point, or a relevant question.
 
@@ -1332,6 +1366,7 @@ app.post("/generateAuto", async (req, res) => {
       emojiBool = true,
       web3Bool = true,
       companyId,
+      authorName,
     } = req.body;
 
     // Validate input
@@ -1680,7 +1715,7 @@ You are a professional known for clear, valuable commentary. Your comments add g
       messages: [
         {
           role: "user",
-          content: `Generate a reply for this ${platform} post:\n\n"${post_text}"\n\nOnly provide the reply text, nothing else.`,
+          content: `Generate a reply for this ${platform} post:\n\n"${post_text}"${authorName ? `\n\nAuthor: ${authorName}` : ""}\n\n${authorName ? `When appropriate, you may address the author by name (${authorName}) to make your comment more personal and engaging. ` : ""}Only provide the reply text, nothing else.`,
         },
       ],
     });
